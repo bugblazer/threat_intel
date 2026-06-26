@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api.js';
 import { LoadingState, Spinner } from '../components/ui/index.jsx';
-import { RefreshCw, UserCheck, UserX } from 'lucide-react';
+import { RefreshCw, UserCheck, UserX, UserPlus, X } from 'lucide-react';
+
+const ROLES = ['readonly', 'contributor', 'admin'];
 
 function RoleBadge({ role }) {
   const colors = {
@@ -17,17 +19,139 @@ function RoleBadge({ role }) {
   );
 }
 
+// ── Create User Modal ─────────────────────────────────────────────────────────
+function CreateUserModal({ onClose, onCreated }) {
+  const [email, setEmail]       = useState('');
+  const [password, setPassword] = useState('');
+  const [role, setRole]         = useState('readonly');
+  const [error, setError]       = useState('');
+  const [saving, setSaving]     = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!email || !password) { setError('Email and password are required'); return; }
+    if (password.length < 8)  { setError('Password must be at least 8 characters'); return; }
+    setSaving(true);
+    setError('');
+    try {
+      await api.register({ email: email.toLowerCase(), password, role });
+      onCreated();
+      onClose();
+    } catch (err) {
+      setError(err.message || 'Failed to create user');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Close on backdrop click
+  const handleBackdrop = (e) => { if (e.target === e.currentTarget) onClose(); };
+
+  return (
+    <div
+      onClick={handleBackdrop}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        zIndex: 200,
+      }}
+    >
+      <div style={{
+        background: 'var(--bg-surface)', border: '1px solid var(--border)',
+        borderRadius: 10, padding: 28, width: 400, position: 'relative',
+      }}>
+        {/* Header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
+          <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--text-primary)' }}>
+            Create New Account
+          </div>
+          <button
+            onClick={onClose}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 2 }}
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          <div className="form-field">
+            <label className="form-label">Email</label>
+            <input
+              className="form-input"
+              type="email"
+              placeholder="analyst@example.com"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              autoFocus
+              required
+            />
+          </div>
+
+          <div className="form-field">
+            <label className="form-label">Password</label>
+            <input
+              className="form-input"
+              type="password"
+              placeholder="Min. 8 characters"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              required
+            />
+          </div>
+
+          <div className="form-field">
+            <label className="form-label">Role</label>
+            <select
+              className="form-input"
+              value={role}
+              onChange={e => setRole(e.target.value)}
+              style={{ cursor: 'pointer' }}
+            >
+              {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+            {/* Role descriptions */}
+            <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+              {role === 'readonly'    && 'Can view all threat data. Cannot modify anything.'}
+              {role === 'contributor' && 'Can view data and trigger ingestion runs. Cannot manage users.'}
+              {role === 'admin'       && 'Full access including user management and ingestion controls.'}
+            </div>
+          </div>
+
+          {error && (
+            <div style={{ color: 'var(--critical)', fontSize: 12, marginBottom: 14 }}>
+              {error}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
+            <button type="button" className="btn btn-ghost" onClick={onClose} disabled={saving}>
+              Cancel
+            </button>
+            <button type="submit" className="btn btn-primary" disabled={saving}>
+              {saving ? <><Spinner size={13} /> Creating…</> : <><UserPlus size={13} /> Create account</>}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
 export default function AdminPage() {
-  const [users, setUsers]           = useState([]);
-  const [loading, setLoading]       = useState(true);
+  const [users, setUsers]               = useState([]);
+  const [loading, setLoading]           = useState(true);
   const [ingestStatus, setIngestStatus] = useState(null);
-  const [ingesting, setIngesting]   = useState(false);
+  const [ingesting, setIngesting]       = useState(false);
   const [ingestSource, setIngestSource] = useState('');
+  const [showCreate, setShowCreate]     = useState(false);
+  // Track which user row is having its role changed: { id, role }
+  const [editingRole, setEditingRole]   = useState(null);
 
   const loadUsers = () =>
     api.adminUsers().then(d => setUsers(d.data ?? [])).finally(() => setLoading(false));
 
-  const loadStatus = () => api.ingestStatus().then(setIngestStatus);
+  const loadStatus = () => api.ingestStatus().then(setIngestStatus).catch(() => {});
 
   useEffect(() => {
     loadUsers();
@@ -52,8 +176,26 @@ export default function AdminPage() {
     loadUsers();
   };
 
+  const activate = async (id) => {
+    await api.updateUser(id, { is_active: true });
+    loadUsers();
+  };
+
+  const saveRole = async (id, newRole) => {
+    await api.updateUser(id, { role: newRole });
+    setEditingRole(null);
+    loadUsers();
+  };
+
   return (
     <div>
+      {showCreate && (
+        <CreateUserModal
+          onClose={() => setShowCreate(false)}
+          onCreated={loadUsers}
+        />
+      )}
+
       <div className="page-header">
         <div className="page-title">Admin Panel</div>
         <div className="page-sub">User management and ingestion controls</div>
@@ -63,7 +205,6 @@ export default function AdminPage() {
         {/* Ingestion panel */}
         <div className="card">
           <div className="section-title" style={{ marginBottom: 16 }}>Manual Ingestion</div>
-
           <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
             <select className="filter-select" value={ingestSource} onChange={e => setIngestSource(e.target.value)}>
               <option value="">All sources</option>
@@ -82,7 +223,6 @@ export default function AdminPage() {
                 : <><RefreshCw size={13} /> Run ingestion</>}
             </button>
           </div>
-
           {ingestStatus && (
             <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
               {ingestStatus.running && (
@@ -107,7 +247,7 @@ export default function AdminPage() {
           )}
         </div>
 
-        {/* Quick stats placeholder */}
+        {/* Stats card */}
         <div className="card">
           <div className="section-title" style={{ marginBottom: 12 }}>Active Users</div>
           <div className="kpi-value" style={{ fontSize: 40 }}>
@@ -119,11 +259,25 @@ export default function AdminPage() {
 
       {/* User table */}
       <div className="card" style={{ padding: 0 }}>
-        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{
+          padding: '14px 20px',
+          borderBottom: '1px solid var(--border)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}>
           <div className="section-title">User Accounts</div>
+          <button className="btn btn-primary" style={{ fontSize: 12 }} onClick={() => setShowCreate(true)}>
+            <UserPlus size={13} /> New account
+          </button>
         </div>
+
         {loading ? (
           <LoadingState />
+        ) : users.length === 0 ? (
+          <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+            No users yet.
+          </div>
         ) : (
           <table className="data-table">
             <thead>
@@ -136,24 +290,66 @@ export default function AdminPage() {
               </tr>
             </thead>
             <tbody>
-              {users.map(u => (
-                <tr key={u.id}>
-                  <td>
-                    <span className="mono" style={{ fontSize: 12 }}>{u.email}</span>
-                  </td>
-                  <td><RoleBadge role={u.role} /></td>
-                  <td>
-                    {u.is_active
-                      ? <span style={{ color: 'var(--low)', fontSize: 12 }}>● Active</span>
-                      : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>○ Inactive</span>}
-                  </td>
-                  <td>
-                    <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                      {new Date(u.created_at).toLocaleDateString()}
-                    </span>
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', gap: 6 }}>
+              {users.map(u => {
+                const isEditingThisRole = editingRole?.id === u.id;
+                return (
+                  <tr key={u.id}>
+                    <td>
+                      <span className="mono" style={{ fontSize: 12 }}>{u.email}</span>
+                    </td>
+
+                    {/* Role cell — click badge to open inline role editor */}
+                    <td>
+                      {isEditingThisRole ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <select
+                            className="filter-select"
+                            style={{ fontSize: 11, padding: '3px 6px' }}
+                            value={editingRole.role}
+                            onChange={e => setEditingRole({ id: u.id, role: e.target.value })}
+                            autoFocus
+                          >
+                            {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                          </select>
+                          <button
+                            className="btn btn-primary"
+                            style={{ padding: '3px 8px', fontSize: 11 }}
+                            onClick={() => saveRole(u.id, editingRole.role)}
+                          >
+                            Save
+                          </button>
+                          <button
+                            className="btn btn-ghost"
+                            style={{ padding: '3px 8px', fontSize: 11 }}
+                            onClick={() => setEditingRole(null)}
+                          >
+                            <X size={10} />
+                          </button>
+                        </div>
+                      ) : (
+                        <span
+                          title="Click to change role"
+                          style={{ cursor: 'pointer' }}
+                          onClick={() => setEditingRole({ id: u.id, role: u.role })}
+                        >
+                          <RoleBadge role={u.role} />
+                        </span>
+                      )}
+                    </td>
+
+                    <td>
+                      {u.is_active
+                        ? <span style={{ color: 'var(--low)', fontSize: 12 }}>● Active</span>
+                        : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>○ Inactive</span>}
+                    </td>
+
+                    <td>
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        {new Date(u.created_at).toLocaleDateString()}
+                      </span>
+                    </td>
+
+                    <td>
                       {u.is_active ? (
                         <button
                           className="btn btn-ghost"
@@ -166,18 +362,15 @@ export default function AdminPage() {
                         <button
                           className="btn btn-ghost"
                           style={{ padding: '3px 8px', fontSize: 11 }}
-                          onClick={async () => {
-                            await api.updateUser(u.id, { is_active: true });
-                            loadUsers();
-                          }}
+                          onClick={() => activate(u.id)}
                         >
                           <UserCheck size={11} /> Activate
                         </button>
                       )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

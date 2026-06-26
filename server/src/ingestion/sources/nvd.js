@@ -62,21 +62,36 @@ function parseCve(item) {
   const cweEntry = cve.weaknesses?.[0]?.description?.find(d => d.lang === 'en');
   const cweId = cweEntry?.value ?? null;
 
-  // Affected products (CPE matches)
+  // Affected products — NVD 2.0 uses nested configurations > nodes > cpeMatch.
+  // Some CVEs also have a top-level cpeMatch array. We handle both.
   const affectedProducts = [];
-  for (const config of cve.configurations ?? []) {
-    for (const node of config.nodes ?? []) {
-      for (const match of node.cpeMatch ?? []) {
-        // CPE URI: cpe:2.3:a:vendor:product:version:...
-        const parts = match.criteria?.split(':') ?? [];
+
+  const extractCpe = (cpeMatch = []) => {
+    for (const match of cpeMatch) {
+      // CPE URI: cpe:2.3:a:vendor:product:version:...
+      const parts = (match.criteria ?? match.cpe23Uri ?? '').split(':');
+      if (parts.length >= 5) {
         affectedProducts.push({
-          vendor:   parts[3] ?? null,
-          product:  parts[4] ?? null,
-          version:  parts[5] ?? null,
+          vendor:     parts[3] || null,
+          product:    parts[4] || null,
+          version:    parts[5] !== '*' ? parts[5] : null,
           vulnerable: match.vulnerable ?? true,
         });
       }
     }
+  };
+
+  for (const config of cve.configurations ?? []) {
+    // Standard nested format
+    for (const node of config.nodes ?? []) {
+      extractCpe(node.cpeMatch ?? []);
+      // Some nodes have nested children
+      for (const child of node.children ?? []) {
+        extractCpe(child.cpeMatch ?? []);
+      }
+    }
+    // Flat format (some NVD entries)
+    extractCpe(config.cpeMatch ?? []);
   }
 
   // References

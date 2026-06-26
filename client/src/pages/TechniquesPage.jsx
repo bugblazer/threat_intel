@@ -4,7 +4,6 @@ import { api } from '../lib/api.js';
 import { LoadingState, EmptyState } from '../components/ui/index.jsx';
 import { Crosshair } from 'lucide-react';
 
-// MITRE ATT&CK tactic display order (canonical kill chain order)
 const TACTIC_ORDER = [
   'reconnaissance', 'resource-development', 'initial-access',
   'execution', 'persistence', 'privilege-escalation',
@@ -33,7 +32,6 @@ const TACTIC_LABELS = {
 function cellColor(freq, max) {
   if (!freq || !max) return 'rgba(26,34,53,0.8)';
   const ratio = freq / max;
-  // Interpolate from dim bg to electric cyan
   const alpha = 0.1 + ratio * 0.85;
   if (ratio > 0.75) return `rgba(0, 212, 255, ${alpha})`;
   if (ratio > 0.5)  return `rgba(0, 160, 210, ${alpha})`;
@@ -59,10 +57,23 @@ export default function TechniquesPage() {
   if (loading) return <LoadingState />;
   if (!heatmap) return <EmptyState icon={Crosshair} message="No technique data yet" sub="Run the MITRE ingestion script first" />;
 
-  const { byTactic } = heatmap;
-  const maxFreq = Math.max(...Object.values(byTactic).flat().map(t => t.total_frequency || 0), 1);
+  // PG COUNT returns bigints; Knex serialises them as strings to avoid JS
+  // precision loss. Coerce all numeric fields to Number before any arithmetic.
+  const byTactic = Object.fromEntries(
+    Object.entries(heatmap.byTactic).map(([tactic, techniques]) => [
+      tactic,
+      techniques.map(t => ({
+        ...t,
+        ioc_count:       Number(t.ioc_count),
+        cve_count:       Number(t.cve_count),
+        total_frequency: Number(t.total_frequency),
+      })),
+    ])
+  );
 
-  // Build column list — ordered, skip tactics with no data
+  const allTechniques = Object.values(byTactic).flat();
+  const maxFreq = allTechniques.reduce((m, t) => Math.max(m, t.total_frequency), 0) || 1;
+
   const tactics = TACTIC_ORDER.filter(t => byTactic[t]?.length);
 
   return (
@@ -84,7 +95,7 @@ export default function TechniquesPage() {
           ))}
         </div>
 
-        {/* Technique cells — one row per technique slot, columns = tactics */}
+        {/* Cells */}
         {(() => {
           const maxRows = Math.max(...tactics.map(t => (byTactic[t] ?? []).length));
           return Array.from({ length: maxRows }, (_, row) => (
@@ -93,7 +104,7 @@ export default function TechniquesPage() {
                 const technique = (byTactic[tactic] ?? [])[row];
                 if (!technique) return <div key={tactic} style={{ width: 92, flexShrink: 0 }} />;
 
-                const freq    = technique.total_frequency || 0;
+                const freq    = technique.total_frequency;
                 const bg      = cellColor(freq, maxFreq);
                 const textCol = cellTextColor(freq, maxFreq);
 
@@ -102,20 +113,19 @@ export default function TechniquesPage() {
                     key={tactic}
                     className="heatmap-cell"
                     style={{
-                      width: 92,
-                      flexShrink: 0,
-                      height: 44,
-                      background: bg,
+                      width: 92, flexShrink: 0, height: 44, background: bg,
                       border: `1px solid ${freq > 0 ? 'rgba(0,212,255,0.2)' : 'rgba(30,45,69,0.6)'}`,
-                      padding: '5px 6px',
-                      display: 'flex',
-                      flexDirection: 'column',
+                      padding: '5px 6px', display: 'flex', flexDirection: 'column',
                       justifyContent: 'space-between',
                     }}
                     onClick={() => navigate(`/techniques/${technique.technique_id}`)}
                     onMouseEnter={e => {
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      setTooltip({ technique, x: rect.right + 8, y: rect.top });
+                      const rect   = e.currentTarget.getBoundingClientRect();
+                      const tipW   = 220;
+                      const tipH   = 120;
+                      const x = (window.innerWidth - rect.right) >= tipW + 12 ? rect.right + 8 : rect.left - tipW - 8;
+                      const y = (window.innerHeight - rect.top)  >= tipH       ? rect.top       : rect.bottom - tipH;
+                      setTooltip({ technique, x, y });
                     }}
                     onMouseLeave={() => setTooltip(null)}
                   >
@@ -145,13 +155,16 @@ export default function TechniquesPage() {
         </div>
       </div>
 
-      {/* Floating tooltip */}
       {tooltip && (
         <div className="tooltip" style={{ left: tooltip.x, top: tooltip.y }}>
           <div className="tooltip-title">{tooltip.technique.name}</div>
           <div className="tooltip-row">
             <span>ID</span>
             <span className="tooltip-val">{tooltip.technique.technique_id}</span>
+          </div>
+          <div className="tooltip-row">
+            <span>Tactic</span>
+            <span className="tooltip-val">{tooltip.technique.tactic}</span>
           </div>
           <div className="tooltip-row">
             <span>IOCs</span>
@@ -162,7 +175,7 @@ export default function TechniquesPage() {
             <span className="tooltip-val">{tooltip.technique.cve_count}</span>
           </div>
           <div className="tooltip-row">
-            <span>Total frequency</span>
+            <span>Frequency</span>
             <span className="tooltip-val">{tooltip.technique.total_frequency}</span>
           </div>
         </div>

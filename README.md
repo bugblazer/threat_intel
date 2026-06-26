@@ -19,7 +19,7 @@ Full-stack security intelligence platform · React + Node.js + PostgreSQL
 ### 1. Clone and install dependencies
 
 ```bash
-git clone <your-repo>
+git clone https://github.com/bugblazer/threat_intel
 cd threat-intel
 npm install          # installs both server/ and client/ workspaces
 ```
@@ -100,6 +100,6 @@ threat-intel/
 | Source | What it provides | Auth |
 |--------|-----------------|------|
 | MITRE ATT&CK | Tactics, techniques, sub-techniques | None (public JSON) |
-| NVD CVE Feed (NIST) | CVEs with CVSS scores and affected products | None (public API) |
-| Abuse.ch | Malware hashes, C2 URLs, botnet IOCs | None (public feeds) |
+| NVD CVE Feed (NIST) | CVEs with CVSS scores and affected products | API key (free) |
+| Abuse.ch | Malware hashes, C2 URLs, botnet IOCs | API key (free) |
 | AlienVault OTX | Community threat pulses with ATT&CK mappings | API key (free) |

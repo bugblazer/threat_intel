@@ -19,6 +19,7 @@ const { ingestMitre }  = require('./sources/mitre');
 const { ingestNvd }    = require('./sources/nvd');
 const { ingestAbusech} = require('./sources/abusech');
 const { ingestOtx }    = require('./sources/otx');
+const { linkAll }      = require('./sources/linker');
 const { makeLogger }   = require('./utils/logger');
 
 const log = makeLogger('ORCHESTRATOR');
@@ -62,6 +63,14 @@ async function runIngestion({ fullSync = false, source } = {}) {
   await run('nvd',     () => ingestNvd(db, { fullSync }));
   await run('abusech', () => ingestAbusech(db));
   await run('otx',     () => ingestOtx(db));
+
+  // Always run the linker after sources complete, unless a single specific
+  // source was requested (in which case the user is testing that source alone).
+  // The linker populates cve_technique_map and iocs.linked_technique_id,
+  // which is what makes the ATT&CK heatmap frequency counts non-zero.
+  if (!source || source === 'linker') {
+    await run('linker', () => linkAll(db));
+  }
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);
 

@@ -82,18 +82,22 @@ router.get('/:id', asyncHandler(async (req, res) => {
   const actor = await db('threat_actors').where('id', req.params.id).first();
   if (!actor) return res.status(404).json({ error: 'Threat actor not found' });
 
+  // PG text[] comes back as a JS array from Knex, but may be null or empty.
+  // Filter out any blank/null entries just in case.
+  const techniqueIds = (actor.technique_ids ?? []).filter(Boolean);
+
   // Resolve technique_ids[] to full technique objects
-  const techniques = actor.technique_ids?.length
+  const techniques = techniqueIds.length
     ? await db('techniques')
-        .whereIn('technique_id', actor.technique_ids)
+        .whereIn('technique_id', techniqueIds)
         .select('technique_id', 'name', 'tactic', 'platforms')
     : [];
 
-  // Recent IOCs that reference any of this actor's techniques
+  // Recent IOCs linked to any of this actor's techniques via the join
   const iocs = techniques.length
     ? await db('iocs as i')
         .join('techniques as t', 't.id', 'i.linked_technique_id')
-        .whereIn('t.technique_id', actor.technique_ids)
+        .whereIn('t.technique_id', techniqueIds)
         .select('i.value', 'i.type', 'i.source_feed', 'i.malware_family', 'i.last_seen', 't.name as technique_name')
         .orderBy('i.last_seen', 'desc')
         .limit(30)

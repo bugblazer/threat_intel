@@ -38,24 +38,13 @@ router.get('/', asyncHandler(async (req, res) => {
 
 let query = db('cves');
 
-// Apply filters
-if (severity)
-  query.where('severity', severity.toUpperCase());
-
-if (min_score)
-  query.where('cvss_score', '>=', parseFloat(min_score));
-
-if (max_score)
-  query.where('cvss_score', '<=', parseFloat(max_score));
-
-if (cwe_id)
-  query.where('cwe_id', cwe_id);
-
-if (published_after)
-  query.where('published_at', '>=', published_after);
-
-if (published_before)
-  query.where('published_at', '<=', published_before);
+// Apply filters — each uses a dedicated index (migration 004)
+if (severity)         query = query.where('severity', severity.toUpperCase());
+if (min_score)        query = query.where('cvss_score', '>=', parseFloat(min_score));
+if (max_score)        query = query.where('cvss_score', '<=', parseFloat(max_score));
+if (cwe_id)           query = query.where('cwe_id', cwe_id);
+if (published_after)  query = query.where('published_at', '>=', published_after);
+if (published_before) query = query.where('published_at', '<=', published_before);
 
 // Count matching rows
 const [{ count }] = await query

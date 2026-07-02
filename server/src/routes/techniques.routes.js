@@ -54,20 +54,34 @@ router.get('/', asyncHandler(async (req, res) => {
 // DB Concept: Views — reads from technique_frequency view
 // Returns the full matrix (no pagination) — the heatmap needs all tactics at once
 router.get('/heatmap', asyncHandler(async (req, res) => {
-  const db   = getPool(req.user.role);
-  const rows = await db('technique_frequency')
-    .select('technique_id', 'name', 'tactic', 'is_subtechnique', 'platforms',
-            'ioc_count', 'cve_count', 'total_frequency');
+  const db = getPool(req.user.role);
+
+  // Cast bigint COUNT columns to int in SQL — Knex serialises PG bigints as
+  // strings to avoid JS precision loss, which breaks Math.max on the frontend.
+  const rows = await db.raw(`
+    SELECT
+      technique_id,
+      name,
+      tactic,
+      is_subtechnique,
+      platforms,
+      ioc_count::int       AS ioc_count,
+      cve_count::int       AS cve_count,
+      total_frequency::int AS total_frequency
+    FROM technique_frequency
+  `);
+
+  const data = rows.rows;
 
   // Group by tactic for the frontend matrix renderer
-  const byTactic = rows.reduce((acc, row) => {
+  const byTactic = data.reduce((acc, row) => {
     const t = row.tactic || 'unknown';
     if (!acc[t]) acc[t] = [];
     acc[t].push(row);
     return acc;
   }, {});
 
-  res.json({ data: rows, byTactic });
+  res.json({ data, byTactic });
 }));
 
 // ── GET /api/v1/techniques/tactics ────────────────────────────────────────────

@@ -130,8 +130,8 @@ export default function DashboardPage() {
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {(feeds.topTechniques ?? []).slice(0, 7).map(t => {
-              const maxFreq = feeds.topTechniques[0]?.total_frequency || 1;
-              const pct = Math.round((t.total_frequency / maxFreq) * 100);
+              const maxFreq = Number(feeds.topTechniques[0]?.total_frequency) || 1;
+              const pct = Math.round((Number(t.total_frequency) / maxFreq) * 100);
               return (
                 <div key={t.technique_id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/techniques/${t.technique_id}`)}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>

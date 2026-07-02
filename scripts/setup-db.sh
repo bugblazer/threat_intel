@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="$SCRIPT_DIR/../.env"
 
 if [[ ! -f "$ENV_FILE" ]]; then
-  echo "❌  .env not found. Copy .env.example → .env and fill in values."
+  echo ".env not found. Copy .env.example → .env and fill in values."
   exit 1
 fi
 
@@ -28,7 +28,7 @@ READONLY_PASS="${PG_READONLY_PASSWORD:-changeme_readonly}"
 CONTRIB_USER="${PG_CONTRIBUTOR_USER:-threat_contributor}"
 CONTRIB_PASS="${PG_CONTRIBUTOR_PASSWORD:-changeme_contributor}"
 
-echo "🔧  Setting up PostgreSQL database: $DB"
+echo "Setting up PostgreSQL database: $DB"
 
 # ── Create login users (with passwords) ─────────────────────────────────────
 psql -U postgres -v ON_ERROR_STOP=1 postgres <<SQL
@@ -77,12 +77,12 @@ SQL
 echo "✅  Roles and database created."
 
 # ── Run Knex migrations ──────────────────────────────────────────────────────
-echo "🚀  Running migrations..."
+echo "Running migrations..."
 cd "$SCRIPT_DIR/../server"
 npm run migrate
 
 echo ""
-echo "✅  Database setup complete!"
+echo "Database setup complete!"
 echo ""
 echo "Connection strings for reference:"
 echo "  Admin:       postgres://$ADMIN_USER:***@localhost:5432/$DB"

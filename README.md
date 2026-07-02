@@ -48,7 +48,7 @@ This will:
 
 ```bash
 npm run dev:server   # Express API on http://localhost:3001
-npm run dev:client   # React app on http://localhost:5173  (coming soon)
+npm run dev:client   # React app on http://localhost:5173
 ```
 
 ---
@@ -87,10 +87,10 @@ threat-intel/
 │       │   ├── db.js              ← role-aware connection pools
 │       │   ├── migrations/        ← 001–006
 │       │   └── seeds/             ← (coming soon)
-│       ├── routes/                ← Express route handlers (coming soon)
-│       ├── middleware/            ← JWT auth middleware (coming soon)
-│       └── ingestion/             ← data feed scripts (coming soon)
-└── client/                        ← React app (coming soon)
+│       ├── routes/                ← Express route handlers
+│       ├── middleware/            ← JWT auth middleware
+│       └── ingestion/             ← data feed scripts
+└── client/                        ← React app
 ```
 
 ---

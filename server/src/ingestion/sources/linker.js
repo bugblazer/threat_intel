@@ -107,21 +107,35 @@ const KEYWORD_TECHNIQUE_MAP = [
 // Regex to find explicit T#### or T####.### references in text
 const TECHNIQUE_ID_REGEX = /\bT\d{4}(?:\.\d{3})?\b/g;
 
+// BUG FIX: keyword matching used plain substring `includes()`, so short
+// keywords caused heavy false positives — "rce" matched "force"/"resource",
+// "c2" matched "ec2", etc. Precompile word-boundary regexes instead.
+const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const COMPILED_KEYWORD_MAP = KEYWORD_TECHNIQUE_MAP.map(({ keywords, technique }) => ({
+  technique,
+  regexes: keywords.map(kw =>
+    new RegExp(`(^|[^a-z0-9])${escapeRe(kw.trim())}([^a-z0-9]|$)`, 'i')),
+}));
+
 /**
  * Find the best matching technique_id for a block of text.
  * Returns the technique_id string (e.g. "T1059.001") or null.
+ * @param {string} text
+ * @param {Map}    [techMap] - known technique_id → db id. When provided,
+ *   explicit IDs not present in the map are skipped so we can still fall
+ *   back to keyword matching instead of dropping the row.
  */
-function findTechniqueForText(text) {
+function findTechniqueForText(text, techMap) {
   if (!text) return null;
-  const lower = text.toLowerCase();
 
   // 1. Explicit T#### ID in the text — most reliable
-  const explicit = text.match(TECHNIQUE_ID_REGEX);
-  if (explicit?.length) return explicit[0];
+  for (const id of text.match(TECHNIQUE_ID_REGEX) ?? []) {
+    if (!techMap || techMap.has(id)) return id;
+  }
 
   // 2. Keyword match — first hit wins (map is ordered most→least specific)
-  for (const { keywords, technique } of KEYWORD_TECHNIQUE_MAP) {
-    if (keywords.some(kw => lower.includes(kw))) return technique;
+  for (const { regexes, technique } of COMPILED_KEYWORD_MAP) {
+    if (regexes.some(re => re.test(text))) return technique;
   }
 
   return null;
@@ -148,19 +162,23 @@ async function linkAll(db) {
   // Process in batches to avoid loading millions of CVEs into memory.
   log.info('Linking CVEs to techniques…');
   const CVE_BATCH = 500;
-  let cvePage = 0;
+  // BUG FIX: OFFSET pagination without an ORDER BY is non-deterministic in
+  // Postgres (rows can be skipped or seen twice). Use keyset pagination on id.
+  let lastCveId = 0;
 
   while (true) {
     const cves = await db('cves')
       .select('id', 'cve_id', 'description')
-      .limit(CVE_BATCH)
-      .offset(cvePage * CVE_BATCH);
+      .where('id', '>', lastCveId)
+      .orderBy('id')
+      .limit(CVE_BATCH);
 
     if (!cves.length) break;
+    lastCveId = cves[cves.length - 1].id;
 
     const mappings = [];
     for (const cve of cves) {
-      const techId = findTechniqueForText(cve.description);
+      const techId = findTechniqueForText(cve.description, techMap);
       if (!techId) continue;
 
       const techniqueDbId = techMap.get(techId);
@@ -183,7 +201,6 @@ async function linkAll(db) {
       cveLinks += mappings.length;
     }
 
-    cvePage++;
     if (cves.length < CVE_BATCH) break;
   }
 
@@ -193,16 +210,27 @@ async function linkAll(db) {
   // Match IOC malware_family and tags fields against keyword map.
   log.info('Linking IOCs to techniques…');
   const IOC_BATCH = 1000;
-  let iocPage = 0;
+  // BUG FIX: the old loop combined `whereNull('linked_technique_id')` with an
+  // advancing OFFSET while simultaneously UPDATE-ing rows out of that filter,
+  // so the result set shrank underneath the pagination and large swathes of
+  // IOCs were never processed (the heatmap intensities came out far too low).
+  // Keyset pagination on id is immune to this.
+  let lastIocId = 0;
 
   while (true) {
     const iocs = await db('iocs')
       .select('id', 'malware_family', 'tags', 'threat_type')
       .whereNull('linked_technique_id')   // only unlinked IOCs
-      .limit(IOC_BATCH)
-      .offset(iocPage * IOC_BATCH);
+      .where('id', '>', lastIocId)
+      .orderBy('id')
+      .limit(IOC_BATCH);
 
     if (!iocs.length) break;
+    lastIocId = iocs[iocs.length - 1].id;
+
+    // Group ids per technique so each batch issues a handful of UPDATEs
+    // instead of one round-trip per IOC.
+    const byTechnique = new Map();
 
     for (const ioc of iocs) {
       // Build a single searchable string from all metadata fields
@@ -214,20 +242,23 @@ async function linkAll(db) {
         .filter(Boolean)
         .join(' ');
 
-      const techId = findTechniqueForText(searchText);
+      const techId = findTechniqueForText(searchText, techMap);
       if (!techId) continue;
 
       const techniqueDbId = techMap.get(techId);
       if (!techniqueDbId) continue;
 
-      await db('iocs')
-        .where('id', ioc.id)
-        .update({ linked_technique_id: techniqueDbId, updated_at: new Date() });
-
-      iocLinks++;
+      if (!byTechnique.has(techniqueDbId)) byTechnique.set(techniqueDbId, []);
+      byTechnique.get(techniqueDbId).push(ioc.id);
     }
 
-    iocPage++;
+    for (const [techniqueDbId, ids] of byTechnique) {
+      await db('iocs')
+        .whereIn('id', ids)
+        .update({ linked_technique_id: techniqueDbId, updated_at: new Date() });
+      iocLinks += ids.length;
+    }
+
     if (iocs.length < IOC_BATCH) break;
   }
 

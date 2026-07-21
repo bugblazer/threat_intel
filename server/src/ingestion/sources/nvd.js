@@ -24,7 +24,10 @@ const { makeLogger }     = require('../utils/logger');
 
 const NVD_BASE = 'https://services.nvd.nist.gov/rest/json/cves/2.0';
 const PAGE_SIZE = 2000;
-const RATE_LIMIT_MS = 600; // NVD asks for 6s between requests (no API key) so change it to 6500 if you're not using the key
+// NVD asks for ≥6s between requests without an API key, ~0.6s with one.
+// BUG FIX: was hardcoded to 600ms, which gets keyless users rate-limited (HTTP 403)
+// and silently starves the CVE table. Now picked based on whether a key is set.
+const RATE_LIMIT_MS = process.env.NVD_API_KEY ? 650 : 6500;
 
 /**
  * Map a raw NVD CVE item to a `cves` table row.
@@ -163,23 +166,26 @@ async function ingestNvd(db, { fullSync = false, hoursBack = 8 } = {}) {
 
   log.info(`Total CVEs to fetch: ${total}`);
 
-  let allRows = (firstPage.vulnerabilities ?? []).map(parseCve);
+  // Upsert page-by-page so a full sync (250k+ CVEs) doesn't hold everything
+  // in memory, and partial progress is kept if a later page fails.
+  let count = 0;
+  const firstRows = (firstPage.vulnerabilities ?? []).map(parseCve);
+  await batchUpsert(db, 'cves', firstRows, ['cve_id'], log);
+  count += firstRows.length;
 
-  // Paginate through remaining pages
   const totalPages = Math.ceil(total / PAGE_SIZE);
   for (let page = 1; page < totalPages; page++) {
     await sleep(RATE_LIMIT_MS);
     params.set('startIndex', page * PAGE_SIZE);
     log.info(`Fetching page ${page + 1}/${totalPages}…`);
     const data = await fetchPage(params);
-    allRows = allRows.concat((data.vulnerabilities ?? []).map(parseCve));
+    const rows = (data.vulnerabilities ?? []).map(parseCve);
+    await batchUpsert(db, 'cves', rows, ['cve_id'], log);
+    count += rows.length;
   }
 
-  log.info(`Parsed ${allRows.length} CVEs — upserting…`);
-  await batchUpsert(db, 'cves', allRows, ['cve_id'], log);
-
-  log.done(`NVD ingestion complete — ${allRows.length} CVEs upserted`);
-  return { count: allRows.length };
+  log.done(`NVD ingestion complete — ${count} CVEs upserted`);
+  return { count };
 }
 
 module.exports = { ingestNvd };

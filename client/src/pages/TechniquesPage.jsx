@@ -49,13 +49,18 @@ export default function TechniquesPage() {
   const [heatmap, setHeatmap] = useState(null);
   const [tooltip, setTooltip] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState('');
 
   useEffect(() => {
-    api.heatmap().then(setHeatmap).finally(() => setLoading(false));
+    api.heatmap()
+      .then(setHeatmap)
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
   }, []);
 
   if (loading) return <LoadingState />;
-  if (!heatmap) return <EmptyState icon={Crosshair} message="No technique data yet" sub="Run the MITRE ingestion script first" />;
+  if (error)   return <EmptyState icon={Crosshair} message="Failed to load matrix" sub={error} />;
+  if (!heatmap?.data?.length) return <EmptyState icon={Crosshair} message="No technique data yet" sub="Run the MITRE ingestion script first" />;
 
   // PG COUNT returns bigints; Knex serialises them as strings to avoid JS
   // precision loss. Coerce all numeric fields to Number before any arithmetic.

@@ -35,7 +35,15 @@ app.use(cors({
 app.use(express.json());
 
 // ── Health check (unauthenticated) ────────────────────────────────────────────
-app.get('/health', (_req, res) => res.json({ status: 'ok', ts: new Date() }));
+app.get('/health', async (_req, res) => {
+  try {
+    const { pools } = require('./db/db');
+    await pools.readonly.raw('SELECT 1');
+    res.json({ status: 'ok', db: 'up', ts: new Date() });
+  } catch {
+    res.status(503).json({ status: 'degraded', db: 'down', ts: new Date() });
+  }
+});
 
 // ── API routes ────────────────────────────────────────────────────────────────
 app.use('/api/v1/auth',          authRoutes);
@@ -45,6 +53,15 @@ app.use('/api/v1/techniques',    techniqueRoutes);
 app.use('/api/v1/iocs',          iocRoutes);
 app.use('/api/v1/threat-actors', threatActorRoutes);
 app.use('/api/v1/admin',         adminRoutes);
+
+// ── Serve built React client (client/dist) ────────────────────────────────────
+const path = require('path');
+const clientDist = path.resolve(__dirname, '../../client/dist');
+app.use(express.static(clientDist));
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api/') || req.path === '/health') return next();
+  res.sendFile(path.join(clientDist, 'index.html'));
+});
 
 // ── 404 handler ───────────────────────────────────────────────────────────────
 app.use((_req, res) => res.status(404).json({ error: 'Route not found' }));

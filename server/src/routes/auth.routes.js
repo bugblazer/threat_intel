@@ -51,6 +51,14 @@ router.post('/register', asyncHandler(async (req, res) => {
   if (!email || !password) {
     return res.status(400).json({ error: 'email and password are required' });
   }
+  // Enforce the password policy on the server too — the client-side check
+  // in AdminPage is trivially bypassed with a direct API call.
+  if (typeof password !== 'string' || password.length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'Invalid email address' });
+  }
   if (!['readonly', 'contributor', 'admin'].includes(role)) {
     return res.status(400).json({ error: 'Invalid role' });
   }

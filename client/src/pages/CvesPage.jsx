@@ -6,9 +6,30 @@ import {
   SeverityBadge, CvssScore, MonoId,
   LoadingState, EmptyState, Pagination,
 } from '../components/ui/index.jsx';
-import { ShieldAlert } from 'lucide-react';
+import { ShieldAlert, Crosshair, Wifi } from 'lucide-react';
 
 const SEVERITIES = ['', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
+
+// Small inline indicator of a CVE's real-world threat context.
+function ThreatSignal({ techniques, iocs }) {
+  const t = Number(techniques ?? 0);
+  const i = Number(iocs ?? 0);
+  if (!t && !i) return <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>;
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      {t > 0 && (
+        <span title={`${t} linked ATT&CK technique(s)`} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: 'var(--high)', fontSize: 11 }}>
+          <Crosshair size={11} /> {t}
+        </span>
+      )}
+      {i > 0 && (
+        <span title={`${i} linked IOC(s)`} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: 'var(--cyan)', fontSize: 11 }}>
+          <Wifi size={11} /> {i}
+        </span>
+      )}
+    </div>
+  );
+}
 
 export default function CvesPage() {
   const navigate   = useNavigate();
@@ -20,6 +41,8 @@ export default function CvesPage() {
   const [debouncedQ, setDebouncedQ] = useState('');
   const [severity, setSeverity] = useState('');
   const [minScore, setMinScore] = useState('');
+  const [sort, setSort]         = useState('severity'); // 'severity' | 'threat' | 'recent'
+  const [threatOnly, setThreatOnly] = useState(false);
 
   // Debounce search input 350ms
   useEffect(() => {
@@ -30,7 +53,13 @@ export default function CvesPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = { page, limit: 25, ...(severity && { severity }), ...(minScore && { min_score: minScore }) };
+      const params = {
+        page, limit: 25,
+        ...(severity && { severity }),
+        ...(minScore && { min_score: minScore }),
+        ...(sort && { sort }),
+        ...(threatOnly && { threat_only: 'true' }),
+      };
       const data = debouncedQ
         ? await api.cvesSearch(debouncedQ, { page, limit: 25 })
         : await api.cves(params);
@@ -39,7 +68,7 @@ export default function CvesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, debouncedQ, severity, minScore]);
+  }, [page, debouncedQ, severity, minScore, sort, threatOnly]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -77,6 +106,30 @@ export default function CvesPage() {
           <option value="7">High ≥ 7.0</option>
           <option value="4">Medium ≥ 4.0</option>
         </select>
+        <select
+          className="filter-select"
+          value={sort}
+          onChange={e => { setSort(e.target.value); setPage(1); }}
+          title="Sort order"
+          disabled={!!debouncedQ}
+        >
+          <option value="severity">Sort: Severity</option>
+          <option value="threat">Sort: Threat-informed</option>
+          <option value="recent">Sort: Newest</option>
+        </select>
+        <label
+          className="filter-select"
+          style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: debouncedQ ? 'not-allowed' : 'pointer', opacity: debouncedQ ? 0.5 : 1 }}
+          title="Only CVEs linked to a technique or IOC"
+        >
+          <input
+            type="checkbox"
+            checked={threatOnly}
+            disabled={!!debouncedQ}
+            onChange={e => { setThreatOnly(e.target.checked); setPage(1); }}
+          />
+          With threat intel
+        </label>
       </div>
 
       <div className="card" style={{ padding: 0 }}>
@@ -92,6 +145,7 @@ export default function CvesPage() {
                   <th>CVE ID</th>
                   <th>CVSS</th>
                   <th>Severity</th>
+                  <th>Threat</th>
                   <th>CWE</th>
                   <th>Published</th>
                   <th>Description</th>
@@ -103,6 +157,7 @@ export default function CvesPage() {
                     <td><MonoId>{c.cve_id}</MonoId></td>
                     <td><CvssScore score={c.cvss_score} /></td>
                     <td><SeverityBadge severity={c.severity} /></td>
+                    <td><ThreatSignal techniques={c.technique_count} iocs={c.ioc_count} /></td>
                     <td>
                       <span className="mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                         {c.cwe_id ?? '—'}

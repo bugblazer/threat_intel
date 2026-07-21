@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api.js';
 import { LoadingState, Spinner } from '../components/ui/index.jsx';
-import { RefreshCw, UserCheck, UserX, UserPlus, X } from 'lucide-react';
+import { RefreshCw, UserCheck, UserX, UserPlus, X, Check, ArrowUpCircle } from 'lucide-react';
 
 const ROLES = ['readonly', 'contributor', 'admin'];
 
@@ -15,6 +15,20 @@ function RoleBadge({ role }) {
   return (
     <span className="badge" style={{ background: s.bg, color: s.color, border: 'none' }}>
       {role}
+    </span>
+  );
+}
+
+function RequestStatusBadge({ status }) {
+  const colors = {
+    pending:  { bg: 'var(--high-dim)',     color: 'var(--high)' },
+    approved: { bg: 'var(--low-dim)',      color: 'var(--low)' },
+    declined: { bg: 'var(--critical-dim)', color: 'var(--critical)' },
+  };
+  const s = colors[status] ?? colors.pending;
+  return (
+    <span className="badge" style={{ background: s.bg, color: s.color, border: 'none' }}>
+      {status}
     </span>
   );
 }
@@ -147,18 +161,46 @@ export default function AdminPage() {
   const [showCreate, setShowCreate]     = useState(false);
   // Track which user row is having its role changed: { id, role }
   const [editingRole, setEditingRole]   = useState(null);
+  const [roleRequests, setRoleRequests] = useState([]);
+  const [requestHistory, setRequestHistory] = useState([]);
+  const [requestView, setRequestView]   = useState('pending'); // 'pending' | 'history'
+  const [decidingId, setDecidingId]     = useState(null);
 
   const loadUsers = () =>
     api.adminUsers().then(d => setUsers(d.data ?? [])).finally(() => setLoading(false));
 
   const loadStatus = () => api.ingestStatus().then(setIngestStatus).catch(() => {});
 
+  const loadRequests = () =>
+    api.roleRequests('pending').then(d => setRoleRequests(d.data ?? [])).catch(() => {});
+
+  // History = every request that has been resolved (approved or declined).
+  const loadHistory = () =>
+    api.roleRequests('all')
+      .then(d => setRequestHistory((d.data ?? []).filter(r => r.status !== 'pending')))
+      .catch(() => {});
+
   useEffect(() => {
     loadUsers();
     loadStatus();
+    loadRequests();
     const t = setInterval(loadStatus, 5000);
     return () => clearInterval(t);
   }, []);
+
+  useEffect(() => {
+    if (requestView === 'history') loadHistory();
+  }, [requestView]);
+
+  const decideRequest = async (id, action) => {
+    setDecidingId(id);
+    try {
+      await api.decideRoleRequest(id, action);
+      await Promise.all([loadRequests(), loadHistory(), loadUsers()]);
+    } finally {
+      setDecidingId(null);
+    }
+  };
 
   const triggerIngest = async () => {
     setIngesting(true);
@@ -257,6 +299,133 @@ export default function AdminPage() {
         </div>
       </div>
 
+      {/* Role requests */}
+      <div className="card" style={{ padding: 0, marginBottom: 24 }}>
+        <div style={{
+          padding: '14px 20px',
+          borderBottom: '1px solid var(--border)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+        }}>
+          <ArrowUpCircle size={15} style={{ color: 'var(--high)' }} />
+          <div className="section-title">Contributor Role Requests</div>
+          {roleRequests.length > 0 && (
+            <span className="badge" style={{ background: 'var(--high-dim)', color: 'var(--high)', border: 'none' }}>
+              {roleRequests.length} pending
+            </span>
+          )}
+          {/* Pending / History toggle */}
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+            <button
+              className={`btn ${requestView === 'pending' ? 'btn-primary' : 'btn-ghost'}`}
+              style={{ padding: '3px 10px', fontSize: 11 }}
+              onClick={() => setRequestView('pending')}
+            >
+              Pending
+            </button>
+            <button
+              className={`btn ${requestView === 'history' ? 'btn-primary' : 'btn-ghost'}`}
+              style={{ padding: '3px 10px', fontSize: 11 }}
+              onClick={() => setRequestView('history')}
+            >
+              History
+            </button>
+          </div>
+        </div>
+
+        {requestView === 'pending' ? (
+          roleRequests.length === 0 ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+              No pending requests.
+            </div>
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Current role</th>
+                  <th>Requested</th>
+                  <th>Requested at</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {roleRequests.map(r => (
+                  <tr key={r.id}>
+                    <td><span className="mono" style={{ fontSize: 12 }}>{r.email}</span></td>
+                    <td><RoleBadge role={r.current_role} /></td>
+                    <td><RoleBadge role={r.requested_role} /></td>
+                    <td>
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        {new Date(r.created_at).toLocaleString()}
+                      </span>
+                    </td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          className="btn btn-primary"
+                          style={{ padding: '3px 8px', fontSize: 11 }}
+                          disabled={decidingId === r.id}
+                          onClick={() => decideRequest(r.id, 'approve')}
+                        >
+                          <Check size={11} /> Approve
+                        </button>
+                        <button
+                          className="btn btn-ghost"
+                          style={{ padding: '3px 8px', fontSize: 11 }}
+                          disabled={decidingId === r.id}
+                          onClick={() => decideRequest(r.id, 'decline')}
+                        >
+                          <X size={11} /> Decline
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
+        ) : (
+          requestHistory.length === 0 ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+              No resolved requests yet.
+            </div>
+          ) : (
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Requested</th>
+                  <th>Outcome</th>
+                  <th>Decided by</th>
+                  <th>Decided at</th>
+                </tr>
+              </thead>
+              <tbody>
+                {requestHistory.map(r => (
+                  <tr key={r.id}>
+                    <td><span className="mono" style={{ fontSize: 12 }}>{r.email}</span></td>
+                    <td><RoleBadge role={r.requested_role} /></td>
+                    <td><RequestStatusBadge status={r.status} /></td>
+                    <td>
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        {r.decided_by || '—'}
+                      </span>
+                    </td>
+                    <td>
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                        {r.decided_at ? new Date(r.decided_at).toLocaleString() : '—'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )
+        )}
+      </div>
+
       {/* User table */}
       <div className="card" style={{ padding: 0 }}>
         <div style={{
@@ -350,7 +519,11 @@ export default function AdminPage() {
                     </td>
 
                     <td>
-                      {u.is_active ? (
+                      {u.role === 'admin' ? (
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                          Admins can't be deactivated
+                        </span>
+                      ) : u.is_active ? (
                         <button
                           className="btn btn-ghost"
                           style={{ padding: '3px 8px', fontSize: 11 }}

@@ -15,7 +15,7 @@
 
 const router          = require('express').Router();
 const { getPool }     = require('../db/db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireRole } = require('../middleware/auth');
 const { asyncHandler, paginate } = require('../middleware/common');
 
 router.use(requireAuth);
@@ -60,15 +60,17 @@ router.get('/heatmap', asyncHandler(async (req, res) => {
   // strings to avoid JS precision loss, which breaks Math.max on the frontend.
   const rows = await db.raw(`
     SELECT
-      technique_id,
-      name,
-      tactic,
-      is_subtechnique,
-      platforms,
-      ioc_count::int       AS ioc_count,
-      cve_count::int       AS cve_count,
-      total_frequency::int AS total_frequency
-    FROM technique_frequency
+      tf.technique_id,
+      tf.name,
+      tf.tactic,
+      tf.is_subtechnique,
+      tf.platforms,
+      tf.ioc_count::int       AS ioc_count,
+      tf.cve_count::int       AS cve_count,
+      tf.total_frequency::int AS total_frequency,
+      t.detection_status
+    FROM technique_frequency tf
+    JOIN techniques t ON t.technique_id = tf.technique_id
   `);
 
   const data = rows.rows;
@@ -119,6 +121,32 @@ router.get('/search', asyncHandler(async (req, res) => {
   `, [q, q, `%${q}%`, limit, offset]);
 
   res.json({ query: q, data: rows.rows });
+}));
+
+// ── PATCH /api/v1/techniques/:techniqueId/coverage ────────────────────────────
+// Set detection coverage for a technique. Contributors and admins only —
+// enforced at the DB layer too (only those roles hold UPDATE on techniques).
+const DETECTION_STATES = ['none', 'partial', 'detected'];
+
+router.patch('/:techniqueId/coverage', requireRole('contributor', 'admin'), asyncHandler(async (req, res) => {
+  const db = getPool(req.user.role);
+  const { detection_status, detection_notes } = req.body;
+
+  if (!DETECTION_STATES.includes(detection_status)) {
+    return res.status(400).json({ error: `detection_status must be one of: ${DETECTION_STATES.join(', ')}` });
+  }
+
+  const updates = { detection_status };
+  if (detection_notes !== undefined) updates.detection_notes = detection_notes;
+  updates.updated_at = new Date();
+
+  const [updated] = await db('techniques')
+    .where({ technique_id: req.params.techniqueId.toUpperCase() })
+    .update(updates)
+    .returning(['technique_id', 'detection_status', 'detection_notes']);
+
+  if (!updated) return res.status(404).json({ error: 'Technique not found' });
+  res.json(updated);
 }));
 
 // ── GET /api/v1/techniques/:techniqueId ──────────────────────────────────────

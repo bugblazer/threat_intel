@@ -62,12 +62,17 @@ export default function Sidebar() {
       </nav>
 
       <div className="sidebar-footer">
-        <div style={{ marginBottom: 10 }}>
+        <NavLink
+          to="/account"
+          title="Manage your account"
+          className="sidebar-account"
+          style={{ display: 'block', marginBottom: 10, textDecoration: 'none' }}
+        >
           <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>
             {user?.email}
           </div>
           <span className="role-badge">{user?.role}</span>
-        </div>
+        </NavLink>
         <button className="nav-item" onClick={logout} style={{ color: 'var(--text-muted)' }}>
           <LogOut size={13} />
           Sign out

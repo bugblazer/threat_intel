@@ -1,10 +1,154 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Search, Wifi, ChevronDown, ChevronRight } from 'lucide-react';
+import { Search, Wifi, ChevronDown, ChevronRight, ListChecks, Copy, Check } from 'lucide-react';
 import { api } from '../lib/api.js';
-import { TypeBadge, MonoId, LoadingState, EmptyState, Pagination } from '../components/ui/index.jsx';
+import { TypeBadge, MonoId, LoadingState, EmptyState, Pagination, Spinner } from '../components/ui/index.jsx';
 
 const IOC_TYPES    = ['', 'ip', 'domain', 'url', 'md5', 'sha256', 'sha1'];
 const SOURCE_FEEDS = ['', 'malwarebazaar', 'urlhaus', 'threatfox', 'otx'];
+
+// Render an indicator "defanged" so it's safe to paste into tickets/email.
+function defang(value) {
+  return String(value)
+    .replace(/^http(s?):\/\//i, 'hxxp$1://')
+    .replace(/\./g, '[.]')
+    .replace(/@/g, '[@]');
+}
+
+function CopyButton({ text, title = 'Copy' }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async (e) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch { /* clipboard unavailable */ }
+  };
+  return (
+    <button
+      className="btn btn-ghost"
+      style={{ padding: '2px 6px', fontSize: 11 }}
+      onClick={copy}
+      title={title}
+    >
+      {copied ? <Check size={11} /> : <Copy size={11} />}
+    </button>
+  );
+}
+
+// ── Bulk lookup panel ─────────────────────────────────────────────────────────
+function BulkLookup() {
+  const [input, setInput]     = useState('');
+  const [results, setResults] = useState(null);
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]     = useState('');
+  const [defanged, setDefanged] = useState(true);
+
+  const run = async () => {
+    // Split on newlines, commas, semicolons, or whitespace.
+    const values = input.split(/[\s,;]+/).map(s => s.trim()).filter(Boolean);
+    if (values.length === 0) { setError('Paste at least one indicator'); return; }
+    setLoading(true);
+    setError('');
+    try {
+      const data = await api.iocLookup(values);
+      setResults(data.results ?? []);
+      setSummary(data.summary ?? null);
+    } catch (err) {
+      setError(err.message || 'Lookup failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const show = (v) => (defanged ? defang(v) : v);
+
+  return (
+    <div>
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="section-title" style={{ marginBottom: 10 }}>
+          Paste indicators to check against known IOCs
+        </div>
+        <textarea
+          className="form-input"
+          style={{ width: '100%', minHeight: 120, fontFamily: 'var(--font-mono, monospace)', fontSize: 12, resize: 'vertical' }}
+          placeholder={'One per line, or comma/space separated.\nDefanged indicators are fine: 1[.]2[.]3[.]4, hxxp://evil, evil(dot)com'}
+          value={input}
+          onChange={e => setInput(e.target.value)}
+        />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
+          <button className="btn btn-primary" onClick={run} disabled={loading}>
+            {loading ? <><Spinner size={13} /> Checking…</> : <><ListChecks size={13} /> Look up</>}
+          </button>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)', cursor: 'pointer' }}>
+            <input type="checkbox" checked={defanged} onChange={e => setDefanged(e.target.checked)} />
+            Show defanged
+          </label>
+          {error && <span style={{ color: 'var(--critical)', fontSize: 12 }}>{error}</span>}
+        </div>
+      </div>
+
+      {summary && (
+        <div style={{ display: 'flex', gap: 16, marginBottom: 12, fontSize: 12 }}>
+          <span style={{ color: 'var(--text-muted)' }}>{summary.total} checked</span>
+          <span style={{ color: 'var(--critical)' }}>● {summary.found} known</span>
+          <span style={{ color: 'var(--low)' }}>○ {summary.notFound} clean</span>
+        </div>
+      )}
+
+      {results && (
+        results.length === 0 ? (
+          <EmptyState icon={Wifi} message="Nothing to show" />
+        ) : (
+          <div className="card" style={{ padding: 0 }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Indicator</th>
+                  <th>Status</th>
+                  <th>Type</th>
+                  <th>Feed</th>
+                  <th>Malware Family</th>
+                  <th>Last Seen</th>
+                  <th style={{ width: 40 }} />
+                </tr>
+              </thead>
+              <tbody>
+                {results.map((r, i) => {
+                  const hit = r.matches[0];
+                  return (
+                    <tr key={i} style={hit ? { background: 'var(--critical-dim)' } : undefined}>
+                      <td>
+                        <span className="mono" style={{ fontSize: 11, color: 'var(--text-primary)', wordBreak: 'break-all' }}>
+                          {show(r.input)}
+                        </span>
+                      </td>
+                      <td>
+                        {hit
+                          ? <span className="badge" style={{ background: 'var(--critical-dim)', color: 'var(--critical)', border: 'none' }}>Known</span>
+                          : <span style={{ color: 'var(--low)', fontSize: 12 }}>Clean</span>}
+                      </td>
+                      <td>{hit ? <TypeBadge type={hit.type} /> : <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
+                      <td>{hit ? <span className="badge badge-gray">{hit.source_feed}</span> : <span style={{ color: 'var(--text-muted)' }}>—</span>}</td>
+                      <td><span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{hit?.malware_family ?? '—'}</span></td>
+                      <td>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                          {hit?.last_seen ? new Date(hit.last_seen).toLocaleDateString() : '—'}
+                        </span>
+                      </td>
+                      <td><CopyButton text={show(r.input)} title="Copy indicator" /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )
+      )}
+    </div>
+  );
+}
 
 function ExpandedRow({ ioc }) {
   return (
@@ -62,6 +206,7 @@ export default function IocsPage() {
   const [type, setType]             = useState('');
   const [feed, setFeed]             = useState('');
   const [expandedId, setExpandedId] = useState(null);
+  const [mode, setMode]             = useState('search'); // 'search' | 'bulk'
 
   useEffect(() => {
     const t = setTimeout(() => { setDebouncedQ(query); setPage(1); }, 350);
@@ -96,6 +241,26 @@ export default function IocsPage() {
         <div className="page-sub">Search indicators of compromise across all ingested feeds. Click any row for details.</div>
       </div>
 
+      {/* Mode tabs */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
+        <button
+          className={`btn ${mode === 'search' ? 'btn-primary' : 'btn-ghost'}`}
+          style={{ fontSize: 12 }}
+          onClick={() => setMode('search')}
+        >
+          <Search size={13} /> Search
+        </button>
+        <button
+          className={`btn ${mode === 'bulk' ? 'btn-primary' : 'btn-ghost'}`}
+          style={{ fontSize: 12 }}
+          onClick={() => setMode('bulk')}
+        >
+          <ListChecks size={13} /> Bulk lookup
+        </button>
+      </div>
+
+      {mode === 'bulk' ? <BulkLookup /> : (
+      <>
       <div style={{ display: 'flex', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
         <div className="search-bar" style={{ flex: 1, minWidth: 280 }}>
           <Search size={14} color="var(--text-muted)" />
@@ -181,6 +346,8 @@ export default function IocsPage() {
           </>
         )}
       </div>
+      </>
+      )}
     </div>
   );
 }

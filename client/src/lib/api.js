@@ -34,6 +34,7 @@ export const api = {
   // Auth
   login:    (body)  => request('/auth/login',    { method: 'POST', body: JSON.stringify(body) }),
   register: (body)  => request('/auth/register', { method: 'POST', body: JSON.stringify(body) }),
+  signup:   (body)  => request('/auth/signup',   { method: 'POST', body: JSON.stringify(body) }),
   me:       ()      => request('/auth/me'),
 
   // Dashboard
@@ -51,12 +52,14 @@ export const api = {
   techniquesSearch:(q)           => request(`/techniques/search?q=${encodeURIComponent(q)}`),
   heatmap:         ()            => request('/techniques/heatmap'),
   tactics:         ()            => request('/techniques/tactics'),
+  setCoverage:     (id, body)    => request(`/techniques/${id}/coverage`, { method: 'PATCH', body: JSON.stringify(body) }),
 
   // IOCs
   iocs:       (params = {}) => request(`/iocs?${new URLSearchParams(params)}`),
   ioc:        (id)          => request(`/iocs/${id}`),
   iocsSearch: (q, exact)    => request(`/iocs/search?q=${encodeURIComponent(q)}&exact=${exact}`),
   iocStats:   ()            => request('/iocs/stats'),
+  iocLookup:  (values)      => request('/iocs/lookup', { method: 'POST', body: JSON.stringify({ values }) }),
 
   // Threat actors
   threatActors:       (params = {}) => request(`/threat-actors?${new URLSearchParams(params)}`),
@@ -69,4 +72,12 @@ export const api = {
   deactivateUser:(id)     => request(`/admin/users/${id}`, { method: 'DELETE' }),
   triggerIngest: (body)   => request('/admin/ingest', { method: 'POST', body: JSON.stringify(body) }),
   ingestStatus:  ()       => request('/admin/ingest/status'),
+
+  // Role requests (user-facing)
+  myRoleRequest:   ()          => request('/requests/me'),
+  requestUpgrade:  ()          => request('/requests', { method: 'POST' }),
+
+  // Role requests (admin)
+  roleRequests:      (status = 'pending') => request(`/admin/role-requests?status=${status}`),
+  decideRoleRequest: (id, action)         => request(`/admin/role-requests/${id}`, { method: 'PATCH', body: JSON.stringify({ action }) }),
 };

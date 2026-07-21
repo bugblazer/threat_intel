@@ -55,6 +55,14 @@ router.patch('/users/:id', asyncHandler(async (req, res) => {
     return res.status(400).json({ error: 'No valid fields to update' });
   }
 
+  // Admin accounts cannot be deactivated (own or others').
+  if (updates.is_active === false) {
+    const target = await db('users').select('role').where('id', req.params.id).first();
+    if (target?.role === 'admin') {
+      return res.status(403).json({ error: 'Admin accounts cannot be deactivated' });
+    }
+  }
+
   updates.updated_at = new Date();
   const [updated] = await db('users')
     .where('id', req.params.id)
@@ -70,9 +78,11 @@ router.patch('/users/:id', asyncHandler(async (req, res) => {
 router.delete('/users/:id', asyncHandler(async (req, res) => {
   const db = getPool('admin');
 
-  // Prevent self-deletion
-  if (Number(req.params.id) === req.user.id) {
-    return res.status(400).json({ error: 'Cannot deactivate your own account' });
+  // Admin accounts cannot be deactivated — neither your own nor another admin's.
+  const target = await db('users').select('role').where('id', req.params.id).first();
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  if (target.role === 'admin') {
+    return res.status(403).json({ error: 'Admin accounts cannot be deactivated' });
   }
 
   const [updated] = await db('users')
@@ -82,6 +92,64 @@ router.delete('/users/:id', asyncHandler(async (req, res) => {
 
   if (!updated) return res.status(404).json({ error: 'User not found' });
   res.json({ message: 'User deactivated', user: updated });
+}));
+
+// ── GET /api/v1/admin/role-requests ──────────────────────────────────────────
+// List role-upgrade requests (pending by default; pass ?status=all for history).
+router.get('/role-requests', asyncHandler(async (req, res) => {
+  const db     = getPool('admin');
+  const status = req.query.status || 'pending';
+
+  const q = db('role_requests as r')
+    .join('users as u', 'u.id', 'r.user_id')
+    .select(
+      'r.id', 'r.user_id', 'r.requested_role', 'r.status',
+      'r.decided_by', 'r.decided_at', 'r.created_at',
+      'u.email', 'u.role as current_role',
+    )
+    .orderBy('r.created_at', 'desc');
+
+  if (status !== 'all') q.where('r.status', status);
+
+  res.json({ data: await q });
+}));
+
+// ── PATCH /api/v1/admin/role-requests/:id ─────────────────────────────────────
+// Approve or decline a pending request. Approval promotes the user.
+router.patch('/role-requests/:id', asyncHandler(async (req, res) => {
+  const db       = getPool('admin');
+  const { action } = req.body; // 'approve' | 'decline'
+
+  if (!['approve', 'decline'].includes(action)) {
+    return res.status(400).json({ error: "action must be 'approve' or 'decline'" });
+  }
+
+  const request = await db('role_requests').where('id', req.params.id).first();
+  if (!request) return res.status(404).json({ error: 'Request not found' });
+  if (request.status !== 'pending') {
+    return res.status(409).json({ error: `Request already ${request.status}` });
+  }
+
+  const now = new Date();
+
+  await db.transaction(async (trx) => {
+    await trx('role_requests')
+      .where('id', request.id)
+      .update({
+        status:     action === 'approve' ? 'approved' : 'declined',
+        decided_by: req.user.email,
+        decided_at: now,
+        updated_at: now,
+      });
+
+    if (action === 'approve') {
+      await trx('users')
+        .where('id', request.user_id)
+        .update({ role: request.requested_role, updated_at: now });
+    }
+  });
+
+  res.json({ message: `Request ${action === 'approve' ? 'approved' : 'declined'}` });
 }));
 
 // ── POST /api/v1/admin/ingest ─────────────────────────────────────────────────

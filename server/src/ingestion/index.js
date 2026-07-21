@@ -45,8 +45,8 @@ async function runIngestion({ fullSync = false, source } = {}) {
   if (source) log.info(`Source filter: ${source}`);
   log.info('═══════════════════════════════════════════════');
 
-  const run = async (name, fn) => {
-    if (source && source !== name) return;
+  const run = async (name, fn, force = false) => {
+    if (!force && source && source !== name) return;
     log.info(`\n▶  Starting ${name}…`);
     const t0 = Date.now();
     try {
@@ -68,8 +68,11 @@ async function runIngestion({ fullSync = false, source } = {}) {
   // source was requested (in which case the user is testing that source alone).
   // The linker populates cve_technique_map and iocs.linked_technique_id,
   // which is what makes the ATT&CK heatmap frequency counts non-zero.
-  if (!source || source === 'linker') {
-    await run('linker', () => linkAll(db));
+  // Run whenever data sources ran (fresh CVEs/IOCs need linking) or when
+  // explicitly requested. Previously a single-source run (e.g. from the Admin
+  // UI) skipped linking entirely, leaving the ATT&CK heatmap stale.
+  if (source !== 'mitre') {
+    await run('linker', () => linkAll(db), true);
   }
 
   const elapsed = ((Date.now() - start) / 1000).toFixed(1);

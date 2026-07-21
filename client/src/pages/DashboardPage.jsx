@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PieChart, Pie, Cell, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
+import { PieChart, Pie, Cell, Tooltip as ReTooltip, ResponsiveContainer, Sector } from 'recharts';
 import { ShieldAlert, Wifi, Crosshair, Flame } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { SeverityBadge, CvssScore, MonoId, LoadingState } from '../components/ui/index.jsx';
@@ -22,18 +22,41 @@ function KpiCard({ label, value, sub, accent = 'var(--cyan)' }) {
   );
 }
 
+// Active (hovered) slice — pops outward with a glow
+function ActiveSlice(props) {
+  const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill } = props;
+  return (
+    <g>
+      <Sector
+        cx={cx}
+        cy={cy}
+        innerRadius={innerRadius}
+        outerRadius={outerRadius + 6}
+        startAngle={startAngle}
+        endAngle={endAngle}
+        fill={fill}
+        style={{ filter: `drop-shadow(0 0 6px ${fill})`, transition: 'all 0.2s ease' }}
+      />
+    </g>
+  );
+}
+
 export default function DashboardPage() {
   const [data, setData]     = useState(null);
+  const [error, setError]   = useState('');
   const [loading, setLoading] = useState(true);
+  const [activeIndex, setActiveIndex] = useState(-1);
   const navigate            = useNavigate();
 
   useEffect(() => {
     api.dashboard()
       .then(setData)
+      .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
 
   if (loading) return <LoadingState />;
+  if (error)   return <div style={{ color: 'var(--critical)', padding: 32 }}>Failed to load dashboard: {error}</div>;
   if (!data)   return null;
 
   const { kpis, charts, feeds } = data;
@@ -43,6 +66,9 @@ export default function DashboardPage() {
     value: Number(r.count),
     color: SEV_COLORS[r.severity] ?? '#64748B',
   }));
+
+  const iocTypes   = (charts.iocsByType ?? []).map(r => ({ type: r.type, count: Number(r.count) }));
+  const maxIocType = iocTypes.reduce((m, r) => Math.max(m, r.count), 0) || 1;
 
   return (
     <div>
@@ -98,9 +124,22 @@ export default function DashboardPage() {
                 outerRadius={85}
                 paddingAngle={3}
                 dataKey="value"
+                isAnimationActive
+                animationBegin={200}
+                animationDuration={1400}
+                animationEasing="ease-out"
+                activeIndex={activeIndex}
+                activeShape={ActiveSlice}
+                onMouseEnter={(_, i) => setActiveIndex(i)}
+                onMouseLeave={() => setActiveIndex(-1)}
               >
                 {pieData.map((entry, i) => (
-                  <Cell key={i} fill={entry.color} />
+                  <Cell
+                    key={i}
+                    fill={entry.color}
+                    style={{ cursor: 'pointer', transition: 'opacity 0.2s ease' }}
+                    opacity={activeIndex === -1 || activeIndex === i ? 1 : 0.4}
+                  />
                 ))}
               </Pie>
               <ReTooltip
@@ -110,8 +149,17 @@ export default function DashboardPage() {
             </PieChart>
           </ResponsiveContainer>
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap', marginTop: 8 }}>
-            {pieData.map(d => (
-              <div key={d.name} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+            {pieData.map((d, i) => (
+              <div
+                key={d.name}
+                onMouseEnter={() => setActiveIndex(i)}
+                onMouseLeave={() => setActiveIndex(-1)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer',
+                  opacity: activeIndex === -1 || activeIndex === i ? 1 : 0.4,
+                  transition: 'opacity 0.2s ease',
+                }}
+              >
                 <div style={{ width: 8, height: 8, borderRadius: 2, background: d.color }} />
                 <span style={{ color: 'var(--text-secondary)' }}>{d.name}</span>
                 <span className="mono" style={{ color: 'var(--text-primary)', fontSize: 11 }}>{d.value.toLocaleString()}</span>
@@ -147,6 +195,29 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* IOCs by type — data was already returned by the API but never shown */}
+      {iocTypes.length > 0 && (
+        <div className="card mb-6">
+          <div className="section-header">
+            <div className="section-title">
+              <Wifi size={12} style={{ display: 'inline', marginRight: 6, color: 'var(--cyan)' }} />
+              IOCs by Type
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {iocTypes.map(r => (
+              <div key={r.type} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span className="mono" style={{ width: 70, fontSize: 11, color: 'var(--text-secondary)' }}>{r.type}</span>
+                <div style={{ flex: 1, height: 6, background: 'var(--border)', borderRadius: 3 }}>
+                  <div style={{ height: '100%', width: `${Math.round((r.count / maxIocType) * 100)}%`, background: 'var(--cyan)', borderRadius: 3, transition: 'width 0.5s' }} />
+                </div>
+                <span className="mono" style={{ width: 64, textAlign: 'right', fontSize: 11, color: 'var(--text-primary)' }}>{r.count.toLocaleString()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Recent feeds */}
       <div className="grid-2">

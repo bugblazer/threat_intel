@@ -4,23 +4,26 @@ import { Terminal } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth.jsx';
 import { Spinner } from '../components/ui/index.jsx';
 
-export default function LoginPage() {
-  const { login }     = useAuth();
-  const navigate      = useNavigate();
+export default function RegisterPage() {
+  const { signup }              = useAuth();
+  const navigate                = useNavigate();
   const [email, setEmail]       = useState('');
   const [password, setPassword] = useState('');
+  const [confirm, setConfirm]   = useState('');
   const [error, setError]       = useState('');
   const [loading, setLoading]   = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    if (password.length < 8) { setError('Password must be at least 8 characters'); return; }
+    if (password !== confirm) { setError('Passwords do not match'); return; }
     setLoading(true);
     try {
-      await login(email, password);
+      await signup(email.toLowerCase(), password);
       navigate('/');
     } catch (err) {
-      setError(err.message || 'Login failed');
+      setError(err.message || 'Registration failed');
     } finally {
       setLoading(false);
     }
@@ -33,7 +36,7 @@ export default function LoginPage() {
           <Terminal size={12} style={{ display: 'inline', marginRight: 6 }} />
           ThreatIntel
         </div>
-        <div className="login-title">Sign in to continue</div>
+        <div className="login-title">Create a read-only account</div>
 
         <form onSubmit={handleSubmit}>
           <div className="form-field">
@@ -53,10 +56,22 @@ export default function LoginPage() {
             <input
               className="form-input"
               type="password"
-              autoComplete="current-password"
-              placeholder="••••••••"
+              autoComplete="new-password"
+              placeholder="Min. 8 characters"
               value={password}
               onChange={e => setPassword(e.target.value)}
+              required
+            />
+          </div>
+          <div className="form-field">
+            <label className="form-label">Confirm password</label>
+            <input
+              className="form-input"
+              type="password"
+              autoComplete="new-password"
+              placeholder="Re-enter password"
+              value={confirm}
+              onChange={e => setConfirm(e.target.value)}
               required
             />
           </div>
@@ -69,12 +84,16 @@ export default function LoginPage() {
             disabled={loading}
             style={{ width: '100%', marginTop: 20, justifyContent: 'center' }}
           >
-            {loading ? <Spinner size={14} /> : 'Sign in'}
+            {loading ? <Spinner size={14} /> : 'Create account'}
           </button>
         </form>
 
-        <p style={{ marginTop: 20, fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
-          No account? <Link to="/register" style={{ color: 'var(--cyan)' }}>Create a read-only account</Link>
+        <p style={{ marginTop: 16, fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', lineHeight: 1.6 }}>
+          New accounts have read-only access. You can request the contributor
+          role from your profile once signed in.
+        </p>
+        <p style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)', textAlign: 'center' }}>
+          Already have an account? <Link to="/login" style={{ color: 'var(--cyan)' }}>Sign in</Link>
         </p>
       </div>
     </div>

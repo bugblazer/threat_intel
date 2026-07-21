@@ -43,8 +43,43 @@ router.post('/login', asyncHandler(async (req, res) => {
   });
 }));
 
+// ── POST /api/v1/auth/signup ─────────────────────────────────────────────────
+// Public self-registration. Anyone can create an account, but it is ALWAYS a
+// read-only user — the requested role is ignored. To gain more privileges a
+// read-only user must request the contributor role and have an admin approve it.
+router.post('/signup', asyncHandler(async (req, res) => {
+  const { email, password } = req.body;
+
+  if (!email || !password) {
+    return res.status(400).json({ error: 'email and password are required' });
+  }
+  if (typeof password !== 'string' || password.length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: 'Invalid email address' });
+  }
+
+  const db       = getPool('admin');
+  const existing = await db('users').where({ email: email.toLowerCase() }).first();
+  if (existing) {
+    return res.status(409).json({ error: 'Email already registered' });
+  }
+
+  const password_hash = await bcrypt.hash(password, SALT_ROUNDS);
+  const [user] = await db('users')
+    .insert({ email: email.toLowerCase(), password_hash, role: 'readonly' })
+    .returning(['id', 'email', 'role']);
+
+  const token = signToken(user);
+  res.status(201).json({
+    token,
+    user: { id: user.id, email: user.email, role: user.role },
+  });
+}));
+
 // ── POST /api/v1/auth/register ───────────────────────────────────────────────
-// First-ever user gets admin; subsequent registrations require admin auth.
+// Admin-only user creation (any role). First-ever user gets admin.
 router.post('/register', asyncHandler(async (req, res) => {
   const { email, password, role = 'readonly' } = req.body;
 

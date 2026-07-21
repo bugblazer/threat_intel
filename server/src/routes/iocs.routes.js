@@ -108,6 +108,73 @@ router.get('/stats', asyncHandler(async (req, res) => {
   });
 }));
 
+// ── POST /api/v1/iocs/lookup ──────────────────────────────────────────────────
+// Bulk lookup: paste many indicators at once (from an alert, email, etc.) and
+// get back which ones are known. Handles "defanged" indicators automatically
+// (e.g. 1[.]2[.]3[.]4, hxxp://evil, evil(dot)com).
+function refang(raw) {
+  return String(raw)
+    .trim()
+    .replace(/\[\.\]|\(\.\)|\{\.\}|\(dot\)|\[dot\]/gi, '.')
+    .replace(/\[@\]|\(at\)|\[at\]/gi, '@')
+    .replace(/^h(?:xx|XX)?p(s?):\/\//i, 'http$1://')
+    .replace(/^(\s*)/, '');
+}
+
+router.post('/lookup', asyncHandler(async (req, res) => {
+  const db = getPool(req.user.role);
+  const { values } = req.body;
+
+  if (!Array.isArray(values) || values.length === 0) {
+    return res.status(400).json({ error: 'Body must include a non-empty `values` array' });
+  }
+  if (values.length > 500) {
+    return res.status(400).json({ error: 'Too many indicators — limit is 500 per request' });
+  }
+
+  // Normalise: refang, drop blanks, de-duplicate (case-insensitive).
+  const inputs = [];
+  const seen   = new Set();
+  for (const v of values) {
+    const refanged = refang(v);
+    if (!refanged) continue;
+    const key = refanged.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    inputs.push(refanged);
+  }
+
+  if (inputs.length === 0) {
+    return res.status(400).json({ error: 'No valid indicators found in `values`' });
+  }
+
+  // Build candidate set (exact + lowercase) so hashes/domains match regardless of case.
+  const candidates = new Set();
+  for (const i of inputs) { candidates.add(i); candidates.add(i.toLowerCase()); }
+
+  const matches = await db('active_iocs').whereIn('value', [...candidates]);
+
+  // Group matches by lowercased value for quick assembly.
+  const byValue = new Map();
+  for (const m of matches) {
+    const k = String(m.value).toLowerCase();
+    if (!byValue.has(k)) byValue.set(k, []);
+    byValue.get(k).push(m);
+  }
+
+  const results = inputs.map(input => ({
+    input,
+    matches: byValue.get(input.toLowerCase()) ?? [],
+  }));
+
+  const found = results.filter(r => r.matches.length > 0).length;
+
+  res.json({
+    summary: { total: inputs.length, found, notFound: inputs.length - found },
+    results,
+  });
+}));
+
 // ── GET /api/v1/iocs/:id ──────────────────────────────────────────────────────
 router.get('/:id', asyncHandler(async (req, res) => {
   const db = getPool(req.user.role);

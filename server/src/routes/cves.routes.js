@@ -34,40 +34,65 @@ router.get('/', asyncHandler(async (req, res) => {
     cwe_id,
     published_after,   // ISO date string
     published_before,
+    sort,              // 'severity' (default) | 'threat' | 'recent'
+    threat_only,       // 'true' — only CVEs linked to a technique or IOC
   } = req.query;
 
-let query = db('cves');
+  // "Threat signal" sub-selects: how many ATT&CK techniques this CVE maps to,
+  // and how many known IOCs reference it. Powers threat-informed prioritisation.
+  const TECH_EXPR = '(SELECT COUNT(*) FROM cve_technique_map ctm WHERE ctm.cve_id = c.id)';
+  const IOC_EXPR  = '(SELECT COUNT(*) FROM iocs i WHERE i.linked_cve_id = c.id)';
 
-// Apply filters — each uses a dedicated index (migration 004)
-if (severity)         query = query.where('severity', severity.toUpperCase());
-if (min_score)        query = query.where('cvss_score', '>=', parseFloat(min_score));
-if (max_score)        query = query.where('cvss_score', '<=', parseFloat(max_score));
-if (cwe_id)           query = query.where('cwe_id', cwe_id);
-if (published_after)  query = query.where('published_at', '>=', published_after);
-if (published_before) query = query.where('published_at', '<=', published_before);
+  let query = db('cves as c');
 
-// Count matching rows
-const [{ count }] = await query
-  .clone()
-  .count('* as count');
+  // Apply filters — each uses a dedicated index (migration 004)
+  if (severity)         query = query.where('c.severity', severity.toUpperCase());
+  if (min_score)        query = query.where('c.cvss_score', '>=', parseFloat(min_score));
+  if (max_score)        query = query.where('c.cvss_score', '<=', parseFloat(max_score));
+  if (cwe_id)           query = query.where('c.cwe_id', cwe_id);
+  if (published_after)  query = query.where('c.published_at', '>=', published_after);
+  if (published_before) query = query.where('c.published_at', '<=', published_before);
 
-// Fetch matching rows
-const rows = await query
-  .clone()
-  .select(
-    'id',
-    'cve_id',
-    'description',
-    'cvss_score',
-    'severity',
-    'cwe_id',
-    'published_at',
-    'affected_products'
-  )
-  .orderBy('cvss_score', 'desc')
-  .orderBy('published_at', 'desc')
-  .limit(limit)
-  .offset(offset);
+  // Only vulnerabilities with real-world threat context attached.
+  if (threat_only === 'true') {
+    query = query.where(function () {
+      this.whereExists(function () {
+        this.select(db.raw('1')).from('cve_technique_map as ctm').whereRaw('ctm.cve_id = c.id');
+      }).orWhereExists(function () {
+        this.select(db.raw('1')).from('iocs as i').whereRaw('i.linked_cve_id = c.id');
+      });
+    });
+  }
+
+  // Count matching rows (filters only — sub-selects don't affect the count)
+  const [{ count }] = await query.clone().count('* as count');
+
+  // Fetch matching rows, decorated with the threat signal.
+  let rowsQuery = query.clone().select(
+    'c.id',
+    'c.cve_id',
+    'c.description',
+    'c.cvss_score',
+    'c.severity',
+    'c.cwe_id',
+    'c.published_at',
+    'c.affected_products',
+    db.raw(`${TECH_EXPR}::int AS technique_count`),
+    db.raw(`${IOC_EXPR}::int  AS ioc_count`),
+    db.raw(`(${TECH_EXPR} + ${IOC_EXPR})::int AS threat_score`),
+  );
+
+  if (sort === 'threat') {
+    rowsQuery = rowsQuery
+      .orderByRaw(`(${TECH_EXPR} + ${IOC_EXPR}) DESC`)
+      .orderBy('c.cvss_score', 'desc');
+  } else if (sort === 'recent') {
+    rowsQuery = rowsQuery.orderBy('c.published_at', 'desc');
+  } else {
+    rowsQuery = rowsQuery.orderBy('c.cvss_score', 'desc').orderBy('c.published_at', 'desc');
+  }
+
+  const rows = await rowsQuery.limit(limit).offset(offset);
 
   res.json({
     total: Number(count),

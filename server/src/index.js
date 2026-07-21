@@ -23,6 +23,7 @@ const iocRoutes          = require('./routes/iocs.routes');
 const threatActorRoutes  = require('./routes/threatActors.routes');
 const dashboardRoutes    = require('./routes/dashboard.routes');
 const adminRoutes        = require('./routes/admin.routes');
+const requestRoutes      = require('./routes/requests.routes');
 
 // ── App setup ─────────────────────────────────────────────────────────────────
 const app  = express();
@@ -53,6 +54,7 @@ app.use('/api/v1/techniques',    techniqueRoutes);
 app.use('/api/v1/iocs',          iocRoutes);
 app.use('/api/v1/threat-actors', threatActorRoutes);
 app.use('/api/v1/admin',         adminRoutes);
+app.use('/api/v1/requests',      requestRoutes);
 
 // ── Serve built React client (client/dist) ────────────────────────────────────
 const path = require('path');

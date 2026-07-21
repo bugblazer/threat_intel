@@ -14,6 +14,11 @@ const jwt = require('jsonwebtoken');
 
 const SECRET = process.env.JWT_SECRET || 'dev_secret_change_me';
 
+if (!process.env.JWT_SECRET && process.env.NODE_ENV === 'production') {
+  // Never allow the hardcoded fallback secret outside local development
+  throw new Error('JWT_SECRET must be set in production');
+}
+
 /**
  * Middleware: require a valid JWT.
  * Attaches req.user on success; returns 401 on failure.

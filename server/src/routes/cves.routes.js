@@ -39,9 +39,17 @@ router.get('/', asyncHandler(async (req, res) => {
   } = req.query;
 
   // "Threat signal" sub-selects: how many ATT&CK techniques this CVE maps to,
-  // and how many known IOCs reference it. Powers threat-informed prioritisation.
-  const TECH_EXPR = '(SELECT COUNT(*) FROM cve_technique_map ctm WHERE ctm.cve_id = c.id)';
-  const IOC_EXPR  = '(SELECT COUNT(*) FROM iocs i WHERE i.linked_cve_id = c.id)';
+  // how many known IOCs reference it, and — crucially — how many of those
+  // mapped techniques we currently CAN'T detect (detection_status = 'none').
+  // A CVE that exploits a technique you're blind to is the highest priority:
+  // you can't see it coming, so it weighs double in the priority ordering.
+  const TECH_EXPR  = '(SELECT COUNT(*) FROM cve_technique_map ctm WHERE ctm.cve_id = c.id)';
+  const IOC_EXPR   = '(SELECT COUNT(*) FROM iocs i WHERE i.linked_cve_id = c.id)';
+  const BLIND_EXPR = `(SELECT COUNT(*) FROM cve_technique_map ctm
+                         JOIN techniques t2 ON t2.id = ctm.technique_id
+                        WHERE ctm.cve_id = c.id AND t2.detection_status = 'none')`;
+  // Priority = technique links + IOC links + a double weighting for blind techniques.
+  const PRIORITY_EXPR = `(${TECH_EXPR} + ${IOC_EXPR} + 2 * ${BLIND_EXPR})`;
 
   let query = db('cves as c');
 
@@ -77,14 +85,17 @@ router.get('/', asyncHandler(async (req, res) => {
     'c.cwe_id',
     'c.published_at',
     'c.affected_products',
-    db.raw(`${TECH_EXPR}::int AS technique_count`),
-    db.raw(`${IOC_EXPR}::int  AS ioc_count`),
+    db.raw(`${TECH_EXPR}::int  AS technique_count`),
+    db.raw(`${IOC_EXPR}::int   AS ioc_count`),
+    db.raw(`${BLIND_EXPR}::int AS blind_technique_count`),
     db.raw(`(${TECH_EXPR} + ${IOC_EXPR})::int AS threat_score`),
+    db.raw(`${PRIORITY_EXPR}::int AS priority_score`),
   );
 
   if (sort === 'threat') {
+    // Coverage-aware: CVEs touching techniques you can't detect float to the top.
     rowsQuery = rowsQuery
-      .orderByRaw(`(${TECH_EXPR} + ${IOC_EXPR}) DESC`)
+      .orderByRaw(`${PRIORITY_EXPR} DESC`)
       .orderBy('c.cvss_score', 'desc');
   } else if (sort === 'recent') {
     rowsQuery = rowsQuery.orderBy('c.published_at', 'desc');

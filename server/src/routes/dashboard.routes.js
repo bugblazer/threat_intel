@@ -28,6 +28,7 @@ router.get('/summary', asyncHandler(async (req, res) => {
     cveStats,
     iocStats,
     techniqueStats,
+    coverageStats,
     severityDistribution,
     recentCves,
     recentIocs,
@@ -50,6 +51,9 @@ router.get('/summary', asyncHandler(async (req, res) => {
 
     // Technique coverage
     db('techniques').count('id as total').first(),
+
+    // Detection coverage — techniques grouped by detection_status
+    db('techniques').select('detection_status').count('id as count').groupBy('detection_status'),
 
     // Severity donut chart data (CRITICAL/HIGH/MEDIUM/LOW)
     db.raw(`
@@ -82,12 +86,27 @@ router.get('/summary', asyncHandler(async (req, res) => {
   const totalIocs = iocStats.reduce((sum, r) => sum + Number(r.count), 0);
   const criticalCves = cveStats.find(r => r.severity === 'CRITICAL')?.count ?? 0;
 
+  // Detection coverage breakdown
+  const cov = Object.fromEntries((coverageStats ?? []).map(r => [r.detection_status, Number(r.count)]));
+  const detectedTechniques = cov.detected ?? 0;
+  const partialTechniques  = cov.partial  ?? 0;
+  const blindTechniques    = cov.none     ?? 0;
+  const totalTechniques    = Number(techniqueStats?.total ?? 0);
+  // Partial counts as half-covered for a single headline percentage.
+  const coveragePct = totalTechniques
+    ? Math.round(((detectedTechniques + partialTechniques * 0.5) / totalTechniques) * 100)
+    : 0;
+
   res.json({
     kpis: {
       totalCves,
       totalIocs,
-      totalTechniques:  Number(techniqueStats?.total ?? 0),
+      totalTechniques,
       criticalCves:     Number(criticalCves),
+      coveragePct,
+      detectedTechniques,
+      partialTechniques,
+      blindTechniques,
     },
     charts: {
       severityDistribution: severityDistribution.rows,

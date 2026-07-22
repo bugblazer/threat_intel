@@ -141,7 +141,7 @@ Scheduled (cron) and on-demand manual runs across all four feeds, with a post-in
 ### 1. Clone and install
 
 ```bash
-git clone <your-repo>
+git clone https://github.com/bugblazer/threat_intel
 cd threat-intel
 npm install          # installs both server/ and client/ workspaces
 ```

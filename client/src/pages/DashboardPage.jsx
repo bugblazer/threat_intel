@@ -105,7 +105,56 @@ export default function DashboardPage() {
           sub="MITRE coverage"
           accent="var(--medium)"
         />
+        <KpiCard
+          label="Detection Coverage"
+          value={`${kpis.coveragePct ?? 0}%`}
+          sub={`${kpis.detectedTechniques ?? 0} detected · ${kpis.partialTechniques ?? 0} partial · ${kpis.blindTechniques ?? 0} blind`}
+          accent="var(--low)"
+        />
       </div>
+
+      {/* Detection coverage breakdown */}
+      {kpis.totalTechniques > 0 && (
+        <div className="card mb-6">
+          <div className="section-header">
+            <div className="section-title">
+              <Crosshair size={12} style={{ display: 'inline', marginRight: 6, color: 'var(--low)' }} />
+              Detection Coverage
+            </div>
+            <button className="btn btn-ghost" style={{ fontSize: 11, padding: '3px 8px' }} onClick={() => navigate('/techniques')}>
+              Open matrix →
+            </button>
+          </div>
+          {(() => {
+            const total = kpis.totalTechniques || 1;
+            const seg = [
+              { key: 'detected', label: 'Detected', count: kpis.detectedTechniques ?? 0, color: 'rgba(45,190,110,0.85)' },
+              { key: 'partial',  label: 'Partial',  count: kpis.partialTechniques ?? 0,  color: 'rgba(240,180,60,0.85)' },
+              { key: 'none',     label: 'Blind',    count: kpis.blindTechniques ?? 0,    color: 'rgba(120,130,150,0.35)' },
+            ];
+            return (
+              <>
+                <div style={{ display: 'flex', height: 10, borderRadius: 5, overflow: 'hidden', background: 'var(--border)' }}>
+                  {seg.map(s => s.count > 0 && (
+                    <div key={s.key} title={`${s.label}: ${s.count}`} style={{ width: `${(s.count / total) * 100}%`, background: s.color, transition: 'width 0.5s' }} />
+                  ))}
+                </div>
+                <div style={{ display: 'flex', gap: 16, marginTop: 12, flexWrap: 'wrap' }}>
+                  {seg.map(s => (
+                    <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                      <div style={{ width: 9, height: 9, borderRadius: 2, background: s.color }} />
+                      <span style={{ color: 'var(--text-secondary)' }}>{s.label}</span>
+                      <span className="mono" style={{ color: 'var(--text-primary)', fontSize: 11 }}>
+                        {s.count} ({Math.round((s.count / total) * 100)}%)
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            );
+          })()}
+        </div>
+      )}
 
       {/* Charts + Top techniques */}
       <div className="grid-2 mb-6">

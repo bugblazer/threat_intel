@@ -1,7 +1,36 @@
 import { useState, useEffect } from 'react';
 import { api } from '../lib/api.js';
 import { LoadingState, Spinner } from '../components/ui/index.jsx';
-import { RefreshCw, UserCheck, UserX, UserPlus, X, Check, ArrowUpCircle } from 'lucide-react';
+import { UserCheck, UserX, UserPlus, X, Check, ArrowUpCircle, ScrollText } from 'lucide-react';
+
+// Human-readable label for an audit action code.
+const AUDIT_LABELS = {
+  'user.signed_up':             'User signed up',
+  'user.role_changed':          'Role changed',
+  'user.activated':             'User activated',
+  'user.deactivated':           'User deactivated',
+  'role_request.submitted':     'Upgrade requested',
+  'role_request.approved':      'Role request approved',
+  'role_request.declined':      'Role request declined',
+  'technique.coverage_changed': 'Coverage changed',
+  'ingestion.triggered':        'Ingestion triggered',
+};
+
+function auditSummary(entry) {
+  const d = entry.detail || {};
+  switch (entry.action) {
+    case 'user.role_changed':          return `${entry.target_id}: ${d.from} → ${d.to}`;
+    case 'user.signed_up':
+    case 'user.activated':
+    case 'user.deactivated':           return entry.target_id;
+    case 'role_request.submitted':     return `→ ${d.requested_role}`;
+    case 'role_request.approved':
+    case 'role_request.declined':      return `${d.user} (${d.requested_role})`;
+    case 'technique.coverage_changed': return `${entry.target_id}: ${d.from} → ${d.to}`;
+    case 'ingestion.triggered':        return `source: ${d.source}${d.full_sync ? ' · full sync' : ''}`;
+    default:                           return entry.target_id ?? '';
+  }
+}
 
 const ROLES = ['readonly', 'contributor', 'admin'];
 
@@ -155,9 +184,6 @@ function CreateUserModal({ onClose, onCreated }) {
 export default function AdminPage() {
   const [users, setUsers]               = useState([]);
   const [loading, setLoading]           = useState(true);
-  const [ingestStatus, setIngestStatus] = useState(null);
-  const [ingesting, setIngesting]       = useState(false);
-  const [ingestSource, setIngestSource] = useState('');
   const [showCreate, setShowCreate]     = useState(false);
   // Track which user row is having its role changed: { id, role }
   const [editingRole, setEditingRole]   = useState(null);
@@ -165,11 +191,13 @@ export default function AdminPage() {
   const [requestHistory, setRequestHistory] = useState([]);
   const [requestView, setRequestView]   = useState('pending'); // 'pending' | 'history'
   const [decidingId, setDecidingId]     = useState(null);
+  const [auditLog, setAuditLog]         = useState([]);
+
+  const loadAudit = () =>
+    api.auditLog(50).then(d => setAuditLog(d.data ?? [])).catch(() => {});
 
   const loadUsers = () =>
     api.adminUsers().then(d => setUsers(d.data ?? [])).finally(() => setLoading(false));
-
-  const loadStatus = () => api.ingestStatus().then(setIngestStatus).catch(() => {});
 
   const loadRequests = () =>
     api.roleRequests('pending').then(d => setRoleRequests(d.data ?? [])).catch(() => {});
@@ -182,10 +210,8 @@ export default function AdminPage() {
 
   useEffect(() => {
     loadUsers();
-    loadStatus();
     loadRequests();
-    const t = setInterval(loadStatus, 5000);
-    return () => clearInterval(t);
+    loadAudit();
   }, []);
 
   useEffect(() => {
@@ -196,19 +222,9 @@ export default function AdminPage() {
     setDecidingId(id);
     try {
       await api.decideRoleRequest(id, action);
-      await Promise.all([loadRequests(), loadHistory(), loadUsers()]);
+      await Promise.all([loadRequests(), loadHistory(), loadUsers(), loadAudit()]);
     } finally {
       setDecidingId(null);
-    }
-  };
-
-  const triggerIngest = async () => {
-    setIngesting(true);
-    try {
-      await api.triggerIngest({ source: ingestSource || undefined });
-      await loadStatus();
-    } finally {
-      setIngesting(false);
     }
   };
 
@@ -216,17 +232,20 @@ export default function AdminPage() {
     if (!confirm('Deactivate this user?')) return;
     await api.deactivateUser(id);
     loadUsers();
+    loadAudit();
   };
 
   const activate = async (id) => {
     await api.updateUser(id, { is_active: true });
     loadUsers();
+    loadAudit();
   };
 
   const saveRole = async (id, newRole) => {
     await api.updateUser(id, { role: newRole });
     setEditingRole(null);
     loadUsers();
+    loadAudit();
   };
 
   return (
@@ -240,63 +259,16 @@ export default function AdminPage() {
 
       <div className="page-header">
         <div className="page-title">Admin Panel</div>
-        <div className="page-sub">User management and ingestion controls</div>
+        <div className="page-sub">User management, role requests, and activity</div>
       </div>
 
-      <div className="grid-2 mb-6">
-        {/* Ingestion panel */}
-        <div className="card">
-          <div className="section-title" style={{ marginBottom: 16 }}>Manual Ingestion</div>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-            <select className="filter-select" value={ingestSource} onChange={e => setIngestSource(e.target.value)}>
-              <option value="">All sources</option>
-              <option value="mitre">MITRE ATT&CK</option>
-              <option value="nvd">NVD CVE</option>
-              <option value="abusech">Abuse.ch</option>
-              <option value="otx">AlienVault OTX</option>
-            </select>
-            <button
-              className="btn btn-primary"
-              onClick={triggerIngest}
-              disabled={ingesting || ingestStatus?.running}
-            >
-              {ingesting || ingestStatus?.running
-                ? <><Spinner size={13} /> Running…</>
-                : <><RefreshCw size={13} /> Run ingestion</>}
-            </button>
-          </div>
-          {ingestStatus && (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              {ingestStatus.running && (
-                <div style={{ color: 'var(--high)', marginBottom: 6 }}>⟳ Ingestion in progress…</div>
-              )}
-              {ingestStatus.last && (
-                <div>
-                  <div style={{ marginBottom: 4 }}>
-                    Last run: {new Date(ingestStatus.last.completedAt).toLocaleString()}
-                  </div>
-                  {ingestStatus.last.triggeredBy && (
-                    <div>Triggered by: {ingestStatus.last.triggeredBy}</div>
-                  )}
-                  {ingestStatus.last.error && (
-                    <div style={{ color: 'var(--critical)', marginTop: 4 }}>
-                      Error: {ingestStatus.last.error}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
+      {/* Stats card */}
+      <div className="card mb-6">
+        <div className="section-title" style={{ marginBottom: 12 }}>Active Users</div>
+        <div className="kpi-value" style={{ fontSize: 40 }}>
+          {users.filter(u => u.is_active).length}
         </div>
-
-        {/* Stats card */}
-        <div className="card">
-          <div className="section-title" style={{ marginBottom: 12 }}>Active Users</div>
-          <div className="kpi-value" style={{ fontSize: 40 }}>
-            {users.filter(u => u.is_active).length}
-          </div>
-          <div className="kpi-sub">{users.length} total accounts</div>
-        </div>
+        <div className="kpi-sub">{users.length} total accounts</div>
       </div>
 
       {/* Role requests */}
@@ -544,6 +516,57 @@ export default function AdminPage() {
                   </tr>
                 );
               })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Activity log */}
+      <div className="card" style={{ padding: 0, marginTop: 24 }}>
+        <div style={{
+          padding: '14px 20px',
+          borderBottom: '1px solid var(--border)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+        }}>
+          <ScrollText size={15} style={{ color: 'var(--text-muted)' }} />
+          <div className="section-title">Activity Log</div>
+        </div>
+
+        {auditLog.length === 0 ? (
+          <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+            No recorded activity yet.
+          </div>
+        ) : (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Actor</th>
+                <th>Action</th>
+                <th>Details</th>
+              </tr>
+            </thead>
+            <tbody>
+              {auditLog.map(e => (
+                <tr key={e.id}>
+                  <td>
+                    <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                      {new Date(e.created_at).toLocaleString()}
+                    </span>
+                  </td>
+                  <td><span className="mono" style={{ fontSize: 12 }}>{e.actor_email ?? 'system'}</span></td>
+                  <td>
+                    <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                      {AUDIT_LABELS[e.action] ?? e.action}
+                    </span>
+                  </td>
+                  <td>
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{auditSummary(e)}</span>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         )}

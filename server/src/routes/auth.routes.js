@@ -14,6 +14,7 @@ const bcrypt       = require('bcrypt');
 const { getPool }  = require('../db/db');
 const { signToken, requireAuth, requireRole } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/common');
+const { logAudit } = require('../lib/audit');
 
 const SALT_ROUNDS = 12;
 
@@ -70,6 +71,11 @@ router.post('/signup', asyncHandler(async (req, res) => {
   const [user] = await db('users')
     .insert({ email: email.toLowerCase(), password_hash, role: 'readonly' })
     .returning(['id', 'email', 'role']);
+
+  // The new user is the actor for their own signup.
+  await logAudit(db, { user: { id: user.id, email: user.email } }, {
+    action: 'user.signed_up', targetType: 'user', targetId: user.email, detail: { role: 'readonly' },
+  });
 
   const token = signToken(user);
   res.status(201).json({
@@ -138,8 +144,30 @@ router.post('/register', asyncHandler(async (req, res) => {
 }));
 
 // ── GET /api/v1/auth/me ───────────────────────────────────────────────────────
+// Returns the live user record. Because the role is carried in the JWT, a role
+// change (e.g. an approved contributor request) wouldn't take effect until the
+// user logged in again. To avoid that, we read the current role from the DB and,
+// if it differs from the token, issue a fresh token so the new role activates on
+// the next page load — no manual sign-out needed. Also enforces deactivation.
 router.get('/me', requireAuth, asyncHandler(async (req, res) => {
-  res.json({ user: { id: req.user.id, email: req.user.email, role: req.user.role } });
+  const db     = getPool('admin');
+  const dbUser = await db('users')
+    .select('id', 'email', 'role', 'is_active')
+    .where('id', req.user.id)
+    .first();
+
+  if (!dbUser || !dbUser.is_active) {
+    return res.status(401).json({ error: 'Account is inactive' });
+  }
+
+  const payload = { user: { id: dbUser.id, email: dbUser.email, role: dbUser.role } };
+
+  // Role drifted from what the token says — mint a fresh token with the new role.
+  if (dbUser.role !== req.user.role) {
+    payload.token = signToken(dbUser);
+  }
+
+  res.json(payload);
 }));
 
 module.exports = router;

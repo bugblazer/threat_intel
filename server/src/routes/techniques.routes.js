@@ -17,6 +17,7 @@ const router          = require('express').Router();
 const { getPool }     = require('../db/db');
 const { requireAuth, requireRole } = require('../middleware/auth');
 const { asyncHandler, paginate } = require('../middleware/common');
+const { logAudit } = require('../lib/audit');
 
 router.use(requireAuth);
 router.use(paginate);
@@ -68,7 +69,10 @@ router.get('/heatmap', asyncHandler(async (req, res) => {
       tf.ioc_count::int       AS ioc_count,
       tf.cve_count::int       AS cve_count,
       tf.total_frequency::int AS total_frequency,
-      t.detection_status
+      t.detection_status,
+      t.detection_notes,
+      t.detection_updated_by,
+      t.detection_updated_at
     FROM technique_frequency tf
     JOIN techniques t ON t.technique_id = tf.technique_id
   `);
@@ -136,16 +140,31 @@ router.patch('/:techniqueId/coverage', requireRole('contributor', 'admin'), asyn
     return res.status(400).json({ error: `detection_status must be one of: ${DETECTION_STATES.join(', ')}` });
   }
 
-  const updates = { detection_status };
+  const techId = req.params.techniqueId.toUpperCase();
+  const before = await db('techniques').select('detection_status').where({ technique_id: techId }).first();
+  if (!before) return res.status(404).json({ error: 'Technique not found' });
+
+  const now = new Date();
+  const updates = {
+    detection_status,
+    detection_updated_by: req.user.email,
+    detection_updated_at: now,
+    updated_at: now,
+  };
   if (detection_notes !== undefined) updates.detection_notes = detection_notes;
-  updates.updated_at = new Date();
 
   const [updated] = await db('techniques')
-    .where({ technique_id: req.params.techniqueId.toUpperCase() })
+    .where({ technique_id: techId })
     .update(updates)
-    .returning(['technique_id', 'detection_status', 'detection_notes']);
+    .returning(['technique_id', 'detection_status', 'detection_notes', 'detection_updated_by', 'detection_updated_at']);
 
-  if (!updated) return res.status(404).json({ error: 'Technique not found' });
+  // Audit via the admin pool — audit_log is only writable by threat_admin,
+  // whereas this request may run on the contributor pool.
+  await logAudit(getPool('admin'), req, {
+    action: 'technique.coverage_changed', targetType: 'technique', targetId: techId,
+    detail: { from: before.detection_status, to: detection_status },
+  });
+
   res.json(updated);
 }));
 

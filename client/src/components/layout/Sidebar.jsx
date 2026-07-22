@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, ShieldAlert, Crosshair, Wifi,
-  Users, Settings, LogOut, Terminal,
+  Users, Settings, LogOut, Terminal, Database,
 } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth.jsx';
 
@@ -43,6 +43,19 @@ export default function Sidebar() {
             {label}
           </NavLink>
         ))}
+
+        {(user?.role === 'contributor' || user?.role === 'admin') && (
+          <>
+            <div className="nav-section-label" style={{ marginTop: 8 }}>Operations</div>
+            <NavLink
+              to="/ingestion"
+              className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
+            >
+              <Database size={15} />
+              Ingestion
+            </NavLink>
+          </>
+        )}
 
         {user?.role === 'admin' && (
           <>

@@ -93,15 +93,45 @@ const KEYWORD_TECHNIQUE_MAP = [
   { keywords: ['wiper', 'disk wipe', 'mbr overwrite'], technique: 'T1561' },
   { keywords: ['ddos', 'denial of service', 'dos attack'], technique: 'T1498' },
 
-  // Malware families → their primary technique
-  { keywords: ['emotet'],                              technique: 'T1566' },
-  { keywords: ['trickbot'],                            technique: 'T1055' },
-  { keywords: ['qbot', 'qakbot'],                     technique: 'T1566' },
-  { keywords: ['lockbit'],                             technique: 'T1486' },
-  { keywords: ['conti'],                               technique: 'T1486' },
-  { keywords: ['ryuk'],                                technique: 'T1486' },
-  { keywords: ['wannacry', 'notpetya'],                technique: 'T1486' },
+  // ── Vulnerability exploitation phrasing ─────────────────────────────────────
+  // The single biggest gap: the most common phrases in NVD CVE descriptions were
+  // not mapped at all, so the vast majority of CVEs produced zero technique links
+  // and whole tactic columns stayed empty. These map how an attacker leverages a
+  // class of flaw to a representative ATT&CK technique.
+  { keywords: ['privilege escalation', 'elevation of privilege', 'escalate privileges', 'gain privileges', 'gain elevated', 'local privilege'], technique: 'T1068' },
+  { keywords: ['buffer overflow', 'heap overflow', 'stack overflow', 'heap-based buffer overflow', 'stack-based buffer overflow', 'use after free', 'use-after-free', 'out-of-bounds write', 'out of bounds write', 'out-of-bounds read', 'memory corruption', 'type confusion', 'double free', 'integer overflow'], technique: 'T1203' },
+  { keywords: ['command injection', 'os command injection', 'argument injection', 'arbitrary command'], technique: 'T1059' },
+  { keywords: ['sql injection', 'sqli'],               technique: 'T1190' },
+  { keywords: ['authentication bypass', 'bypass authentication', 'improper authentication', 'auth bypass', 'authorization bypass'], technique: 'T1078' },
+  { keywords: ['insecure deserialization', 'deserialization of untrusted', 'unsafe deserialization'], technique: 'T1190' },
+  { keywords: ['server-side request forgery', 'ssrf'], technique: 'T1190' },
+  { keywords: ['cross-site scripting', 'stored cross-site', 'reflected cross-site', 'xss'], technique: 'T1059.007' },
+  { keywords: ['endpoint denial of service', 'null pointer dereference', 'application crash', 'service crash', 'reachable assertion'], technique: 'T1499' },
+
+  // ── Malware families → their primary technique ──────────────────────────────
+  // Ransomware
+  { keywords: ['lockbit', 'conti', 'ryuk', 'blackcat', 'alphv', 'royal ransomware', 'akira', 'hive ransomware', 'clop', 'black basta', 'blackbasta', 'medusa', 'play ransomware', 'revil', 'sodinokibi', 'maze', 'hellokitty', 'wannacry', 'notpetya', 'phobos', 'rhysida', 'stop djvu'], technique: 'T1486' },
+  // Loaders / droppers
+  { keywords: ['emotet', 'qbot', 'qakbot', 'smokeloader', 'gootloader', 'bumblebee', 'icedid', 'bazarloader', 'guloader', 'amadey', 'darkgate', 'pikabot', 'matanbuchus'], technique: 'T1105' },
+  // Remote access trojans
+  { keywords: ['njrat', 'asyncrat', 'quasarrat', 'quasar rat', 'nanocore', 'remcos', 'xworm', 'netwire', 'warzone', 'orcus', 'adwind', 'revenge rat', 'venomrat'], technique: 'T1219' },
+  // Info-stealers
+  { keywords: ['redline', 'redlinestealer', 'vidar', 'raccoon', 'lumma', 'lummastealer', 'stealc', 'azorult', 'lokibot', 'mars stealer', 'rhadamanthys', 'aurora stealer', 'xloader'], technique: 'T1555' },
+  // Keyloggers
+  { keywords: ['agenttesla', 'agent tesla', 'snake keylogger', 'formbook'], technique: 'T1056.001' },
+  // Banking trojans (heavy process injection)
+  { keywords: ['trickbot', 'dridex', 'gozi', 'ursnif', 'isfb', 'zloader', 'bokbot'], technique: 'T1055' },
+  // C2 frameworks
+  { keywords: ['cobaltstrike', 'sliver', 'mythic', 'havoc', 'brute ratel', 'bruteratel', 'posh c2', 'covenant'], technique: 'T1071' },
   { keywords: ['metasploit', 'meterpreter'],           technique: 'T1059' },
+  // Coin miners
+  { keywords: ['xmrig', 'coinminer', 'cryptominer', 'monero miner'], technique: 'T1496' },
+  // Proxy / botnet infrastructure
+  { keywords: ['systembc', 'socks5systemz'],           technique: 'T1090' },
+
+  // ── IOC threat-type signals (weakest — kept last so a known family wins) ────
+  { keywords: ['payload delivery', 'malware download', 'malware distribution'], technique: 'T1105' },
+  { keywords: ['botnet', 'botnet cc', 'c2 server'],    technique: 'T1071' },
 ];
 
 // Regex to find explicit T#### or T####.### references in text
@@ -118,27 +148,74 @@ const COMPILED_KEYWORD_MAP = KEYWORD_TECHNIQUE_MAP.map(({ keywords, technique })
 }));
 
 /**
- * Find the best matching technique_id for a block of text.
- * Returns the technique_id string (e.g. "T1059.001") or null.
- * @param {string} text
- * @param {Map}    [techMap] - known technique_id → db id. When provided,
- *   explicit IDs not present in the map are skipped so we can still fall
- *   back to keyword matching instead of dropping the row.
+ * Resolve a technique_id string to a { dbId, resolved } pair via the lookup map.
+ * Falls back to the parent technique when a sub-technique isn't present in the
+ * DB (e.g. "T1059.001" → "T1059"), so a strong match is never lost just because
+ * the exact sub-technique wasn't ingested.
  */
-function findTechniqueForText(text, techMap) {
-  if (!text) return null;
+function resolveTechnique(techId, techMap) {
+  if (!techId) return null;
+  if (techMap.has(techId)) return { dbId: techMap.get(techId), resolved: techId };
+  if (techId.includes('.')) {
+    const parent = techId.split('.')[0];
+    if (techMap.has(parent)) return { dbId: techMap.get(parent), resolved: parent };
+  }
+  return null; // genuinely not in the DB — skip this hit
+}
 
-  // 1. Explicit T#### ID in the text — most reliable
+/**
+ * Find ALL matching techniques for a block of text, most-confident first.
+ * Returns an array of { dbId, technique_id, confidence, source } (deduped, capped).
+ *
+ * Collecting multiple matches — instead of only the first — is what gives the
+ * ATT&CK heatmap real spread instead of one or two dominant cells.
+ *
+ * BUG FIX: the previous version returned a keyword's technique WITHOUT checking
+ * it existed in the DB. If that technique was absent, the caller dropped the
+ * whole row instead of trying the next keyword. resolveTechnique() now filters
+ * every hit (and falls back to the parent), so a valid lower-priority match wins.
+ */
+function findTechniques(text, techMap, { max = 4 } = {}) {
+  if (!text) return [];
+  const out = new Map(); // resolved technique_id → entry
+
+  // 1. Explicit T#### IDs in the text — highest confidence
   for (const id of text.match(TECHNIQUE_ID_REGEX) ?? []) {
-    if (!techMap || techMap.has(id)) return id;
+    const r = resolveTechnique(id, techMap);
+    if (r && !out.has(r.resolved)) {
+      out.set(r.resolved, { dbId: r.dbId, technique_id: r.resolved, confidence: 0.90, source: 'auto-regex' });
+    }
   }
 
-  // 2. Keyword match — first hit wins (map is ordered most→least specific)
+  // 2. Keyword matches, ordered most→least specific
   for (const { regexes, technique } of COMPILED_KEYWORD_MAP) {
-    if (regexes.some(re => re.test(text))) return technique;
+    if (out.size >= max) break;
+    if (regexes.some(re => re.test(text))) {
+      const r = resolveTechnique(technique, techMap);
+      if (r && !out.has(r.resolved)) {
+        out.set(r.resolved, { dbId: r.dbId, technique_id: r.resolved, confidence: 0.60, source: 'auto-keyword' });
+      }
+    }
   }
 
-  return null;
+  return [...out.values()].slice(0, max);
+}
+
+/** Single best technique for a text (IOCs hold one FK). */
+function findBestTechnique(text, techMap) {
+  return findTechniques(text, techMap, { max: 1 })[0] ?? null;
+}
+
+/**
+ * Normalize metadata so single-token / camelCase / underscored malware family
+ * names match the spaced keywords in the map:
+ *   "CobaltStrike" → "Cobalt Strike",  "botnet_cc" → "botnet cc".
+ * We search both the original text and this normalized form.
+ */
+function normalizeMeta(text) {
+  return String(text)
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2') // split camelCase
+    .replace(/[_\-]+/g, ' ');               // underscores/dashes → spaces
 }
 
 /**
@@ -178,18 +255,15 @@ async function linkAll(db) {
 
     const mappings = [];
     for (const cve of cves) {
-      const techId = findTechniqueForText(cve.description, techMap);
-      if (!techId) continue;
-
-      const techniqueDbId = techMap.get(techId);
-      if (!techniqueDbId) continue;
-
-      mappings.push({
-        cve_id:           cve.id,
-        technique_id:     techniqueDbId,
-        confidence_score: 0.60,  // keyword match — moderate confidence
-        source:           'auto-keyword',
-      });
+      // A CVE description can reference several techniques — link them all.
+      for (const m of findTechniques(cve.description, techMap)) {
+        mappings.push({
+          cve_id:           cve.id,
+          technique_id:     m.dbId,
+          confidence_score: m.confidence,
+          source:           m.source,
+        });
+      }
     }
 
     if (mappings.length) {
@@ -238,18 +312,16 @@ async function linkAll(db) {
         ? ioc.tags.join(' ')
         : (typeof ioc.tags === 'string' ? ioc.tags : '');
 
-      const searchText = [ioc.malware_family, ioc.threat_type, tags]
-        .filter(Boolean)
-        .join(' ');
+      const raw = [ioc.malware_family, ioc.threat_type, tags].filter(Boolean).join(' ');
+      // Search the raw text AND a normalized copy so "CobaltStrike" / "botnet_cc"
+      // still match the spaced keywords in the map.
+      const searchText = raw + ' ' + normalizeMeta(raw);
 
-      const techId = findTechniqueForText(searchText, techMap);
-      if (!techId) continue;
+      const best = findBestTechnique(searchText, techMap);
+      if (!best) continue;
 
-      const techniqueDbId = techMap.get(techId);
-      if (!techniqueDbId) continue;
-
-      if (!byTechnique.has(techniqueDbId)) byTechnique.set(techniqueDbId, []);
-      byTechnique.get(techniqueDbId).push(ioc.id);
+      if (!byTechnique.has(best.dbId)) byTechnique.set(best.dbId, []);
+      byTechnique.get(best.dbId).push(ioc.id);
     }
 
     for (const [techniqueDbId, ids] of byTechnique) {
@@ -266,4 +338,4 @@ async function linkAll(db) {
   return { cveLinks, iocLinks };
 }
 
-module.exports = { linkAll };
+module.exports = { linkAll, findTechniques, findBestTechnique, resolveTechnique, normalizeMeta };

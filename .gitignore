@@ -1,3 +1,9 @@
 .env
 node_modules/
-.pptx
+
+# Presentation & demo-prep files (not part of the app)
+*.pptx
+PLATFORM_OVERVIEW.md
+PLATFORM_ONEPAGER.md
+DEMO_SCRIPT.md
+DEMO_CUECARD.md

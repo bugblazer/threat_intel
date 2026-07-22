@@ -10,6 +10,7 @@ import IocsPage        from './pages/IocsPage.jsx';
 import ThreatActorsPage from './pages/ThreatActorsPage.jsx';
 import AdminPage       from './pages/AdminPage.jsx';
 import AccountPage     from './pages/AccountPage.jsx';
+import IngestionPage   from './pages/IngestionPage.jsx';
 import CveDetailPage from './pages/CveDetailPage';
 import TechniqueDetailPage from './pages/TechniqueDetailPage';
 import ThreatActorDetailPage from './pages/ThreatActorDetailPage';
@@ -47,6 +48,7 @@ function AppShell() {
           <Route path="/threat-actors" element={<ThreatActorsPage />} />
           <Route path="/admin"         element={<AdminPage />} />
           <Route path="/account"       element={<AccountPage />} />
+          <Route path="/ingestion"     element={<IngestionPage />} />
           <Route path="*"              element={<Navigate to="/" replace />} />
 
         </Routes>

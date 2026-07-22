@@ -19,7 +19,7 @@ function StatusBadge({ status }) {
 }
 
 export default function AccountPage() {
-  const { user }              = useAuth();
+  const { user, refreshUser } = useAuth();
   const [reqState, setReqState] = useState(null);   // latest role request or null
   const [loading, setLoading] = useState(true);
   const [saving, setSaving]   = useState(false);
@@ -31,7 +31,11 @@ export default function AccountPage() {
       .catch(() => {})
       .finally(() => setLoading(false));
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    // Pick up a role change (e.g. an approved request) without a manual re-login.
+    refreshUser();
+    load();
+  }, []);
 
   const submit = async () => {
     setSaving(true);

@@ -12,10 +12,25 @@ export function AuthProvider({ children }) {
     if (!token) { setLoading(false); return; }
 
     api.me()
-      .then(data => setUser(data.user))
+      .then(data => {
+        if (data?.token) localStorage.setItem('token', data.token); // role changed → fresh token
+        setUser(data.user);
+      })
       .catch(() => localStorage.removeItem('token'))
       .finally(() => setLoading(false));
   }, []);
+
+  // Re-fetch the live user record; picks up a refreshed token if the role changed.
+  const refreshUser = async () => {
+    try {
+      const data = await api.me();
+      if (data?.token) localStorage.setItem('token', data.token);
+      if (data?.user) setUser(data.user);
+      return data?.user ?? null;
+    } catch {
+      return null;
+    }
+  };
 
   const login = async (email, password) => {
     const data = await api.login({ email, password });
@@ -37,7 +52,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, signup, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, signup, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );

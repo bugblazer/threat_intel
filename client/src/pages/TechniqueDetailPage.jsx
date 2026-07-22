@@ -1,8 +1,106 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, ShieldCheck, Save } from 'lucide-react';
 import { api } from '../lib/api.js';
-import { CvssScore, SeverityBadge, MonoId, TypeBadge, LoadingState } from '../components/ui/index.jsx';
+import { useAuth } from '../hooks/useAuth.jsx';
+import { CvssScore, SeverityBadge, MonoId, TypeBadge, LoadingState, Spinner } from '../components/ui/index.jsx';
+
+const COVERAGE_STATES = ['none', 'partial', 'detected'];
+const COVERAGE_STYLE = {
+  none:     { label: 'None',     bg: 'var(--text-muted)',  color: 'var(--bg-base, #0b1120)' },
+  partial:  { label: 'Partial',  bg: 'var(--medium, #f59e0b)', color: '#1a1500' },
+  detected: { label: 'Detected', bg: 'var(--low, #10b981)', color: '#00190c' },
+};
+
+function CoverageBadge({ status }) {
+  const s = COVERAGE_STYLE[status] ?? COVERAGE_STYLE.none;
+  return (
+    <span className="badge" style={{ background: s.bg, color: s.color, border: 'none' }}>
+      {s.label}
+    </span>
+  );
+}
+
+// ── Detection coverage panel ──────────────────────────────────────────────────
+function CoveragePanel({ tech, onSaved }) {
+  const { user } = useAuth();
+  const canEdit  = user?.role === 'contributor' || user?.role === 'admin';
+
+  const [status, setStatus] = useState(tech.detection_status || 'none');
+  const [notes, setNotes]   = useState(tech.detection_notes || '');
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState(0);
+  const [error, setError]   = useState('');
+
+  const dirty = status !== (tech.detection_status || 'none') || notes !== (tech.detection_notes || '');
+
+  const save = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const updated = await api.setCoverage(tech.technique_id, { detection_status: status, detection_notes: notes });
+      onSaved(updated);
+      setSavedAt(Date.now());
+    } catch (err) {
+      setError(err.message || 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card mb-4">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+        <ShieldCheck size={14} style={{ color: 'var(--low)' }} />
+        <div className="section-title" style={{ margin: 0 }}>Detection Coverage</div>
+        {!canEdit && <CoverageBadge status={tech.detection_status || 'none'} />}
+      </div>
+
+      {canEdit ? (
+        <>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+            {COVERAGE_STATES.map(s => (
+              <button
+                key={s}
+                className={`btn ${status === s ? 'btn-primary' : 'btn-ghost'}`}
+                style={{ fontSize: 12 }}
+                onClick={() => setStatus(s)}
+              >
+                {COVERAGE_STYLE[s].label}
+              </button>
+            ))}
+          </div>
+          <label className="form-label">Notes</label>
+          <textarea
+            className="form-input"
+            style={{ width: '100%', minHeight: 80, fontSize: 12, resize: 'vertical' }}
+            placeholder="Why is this partial/blind? e.g. no EDR on Linux hosts, rule pending review…"
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
+            <button className="btn btn-primary" onClick={save} disabled={saving || !dirty}>
+              {saving ? <><Spinner size={13} /> Saving…</> : <><Save size={13} /> Save coverage</>}
+            </button>
+            {error && <span style={{ color: 'var(--critical)', fontSize: 12 }}>{error}</span>}
+            {!error && savedAt > 0 && !dirty && <span style={{ color: 'var(--low)', fontSize: 12 }}>Saved</span>}
+          </div>
+        </>
+      ) : (
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6, whiteSpace: 'pre-wrap', margin: 0 }}>
+          {tech.detection_notes || 'No coverage notes.'}
+        </p>
+      )}
+
+      {tech.detection_updated_by && (
+        <div style={{ marginTop: 12, fontSize: 11, color: 'var(--text-muted)' }}>
+          Last set by {tech.detection_updated_by}
+          {tech.detection_updated_at ? ` on ${new Date(tech.detection_updated_at).toLocaleString()}` : ''}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function TechniqueDetailPage() {
   const { techniqueId } = useParams();
@@ -53,6 +151,12 @@ export default function TechniqueDetailPage() {
           {tech.description ?? 'No description available.'}
         </p>
       </div>
+
+      {/* Detection coverage */}
+      <CoveragePanel
+        tech={tech}
+        onSaved={(updated) => setTech(prev => ({ ...prev, ...updated }))}
+      />
 
       <div className="grid-2 mb-4">
         {/* Linked CVEs */}

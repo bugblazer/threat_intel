@@ -80,4 +80,7 @@ export const api = {
   // Role requests (admin)
   roleRequests:      (status = 'pending') => request(`/admin/role-requests?status=${status}`),
   decideRoleRequest: (id, action)         => request(`/admin/role-requests/${id}`, { method: 'PATCH', body: JSON.stringify({ action }) }),
+
+  // Audit log (admin)
+  auditLog:          (limit = 50)         => request(`/admin/audit-log?limit=${limit}`),
 };

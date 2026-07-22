@@ -6,17 +6,19 @@ import {
   SeverityBadge, CvssScore, MonoId,
   LoadingState, EmptyState, Pagination,
 } from '../components/ui/index.jsx';
-import { ShieldAlert, Crosshair, Wifi } from 'lucide-react';
+import { ShieldAlert, Crosshair, Wifi, EyeOff } from 'lucide-react';
 
 const SEVERITIES = ['', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
 
 // Small inline indicator of a CVE's real-world threat context.
-function ThreatSignal({ techniques, iocs }) {
+// A "blind" badge flags CVEs mapped to techniques with no detection coverage.
+function ThreatSignal({ techniques, iocs, blind }) {
   const t = Number(techniques ?? 0);
   const i = Number(iocs ?? 0);
+  const b = Number(blind ?? 0);
   if (!t && !i) return <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>;
   return (
-    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
       {t > 0 && (
         <span title={`${t} linked ATT&CK technique(s)`} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: 'var(--high)', fontSize: 11 }}>
           <Crosshair size={11} /> {t}
@@ -25,6 +27,15 @@ function ThreatSignal({ techniques, iocs }) {
       {i > 0 && (
         <span title={`${i} linked IOC(s)`} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: 'var(--cyan)', fontSize: 11 }}>
           <Wifi size={11} /> {i}
+        </span>
+      )}
+      {b > 0 && (
+        <span
+          title={`${b} mapped technique(s) with no detection coverage`}
+          className="badge"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 3, background: 'var(--critical-dim)', color: 'var(--critical)', border: 'none', fontSize: 10 }}
+        >
+          <EyeOff size={10} /> {b} blind
         </span>
       )}
     </div>
@@ -157,7 +168,7 @@ export default function CvesPage() {
                     <td><MonoId>{c.cve_id}</MonoId></td>
                     <td><CvssScore score={c.cvss_score} /></td>
                     <td><SeverityBadge severity={c.severity} /></td>
-                    <td><ThreatSignal techniques={c.technique_count} iocs={c.ioc_count} /></td>
+                    <td><ThreatSignal techniques={c.technique_count} iocs={c.ioc_count} blind={c.blind_technique_count} /></td>
                     <td>
                       <span className="mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                         {c.cwe_id ?? '—'}

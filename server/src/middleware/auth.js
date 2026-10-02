@@ -58,14 +58,15 @@ function requireRole(...roles) {
 }
 
 /**
- * Sign a new JWT for a user record.
+ * Sign a short-lived access token for a user record. The client keeps it in
+ * memory only and gets a new one from POST /auth/refresh (see lib/refreshTokens.js).
  * @param {{ id, email, role }} user
  */
 function signToken(user) {
   return jwt.sign(
     { id: user.id, email: user.email, role: user.role },
     SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN || '8h' },
+    { expiresIn: process.env.ACCESS_TOKEN_TTL || '15m' },
   );
 }
 

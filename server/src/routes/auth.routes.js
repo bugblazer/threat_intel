@@ -1,7 +1,10 @@
 /**
  * auth.routes.js — /api/v1/auth
  *
- * POST /login     — exchange email+password for a JWT
+ * POST /login     — exchange email+password for an access token + refresh cookie
+ * POST /signup    — public self-registration (read-only accounts)
+ * POST /refresh   — rotate the refresh cookie, get a new 15-minute access token
+ * POST /logout    — revoke the refresh token and clear the cookie
  * POST /register  — create a new user (admin only after first user exists)
  *
  * DB Concept: Access Control
@@ -15,11 +18,28 @@ const { getPool }  = require('../db/db');
 const { signToken, requireAuth, requireRole } = require('../middleware/auth');
 const { asyncHandler } = require('../middleware/common');
 const { logAudit } = require('../lib/audit');
+const { rateLimit } = require('../middleware/rateLimit');
+const { issueRefreshToken, rotateRefreshToken, revokeRefreshToken } = require('../lib/refreshTokens');
+
+const MINUTE = 60 * 1000;
+// Brute-force protection. Two limits on login: per client IP, and per target
+// account so spreading attempts across IPs doesn't help either.
+const loginPerIp      = rateLimit({ windowMs: 15 * MINUTE, max: 20 });
+const loginPerAccount = rateLimit({
+  windowMs: 15 * MINUTE,
+  max:      10,
+  key:      req => (typeof req.body?.email === 'string' ? req.body.email.toLowerCase() : null),
+  message:  'Too many sign-in attempts for this account. Try again in 15 minutes.',
+});
+const signupPerIp     = rateLimit({ windowMs: 60 * MINUTE, max: 5, message: 'Too many sign-ups from this network. Try again later.' });
+const refreshPerIp    = rateLimit({ windowMs: 15 * MINUTE, max: 120 });
+
+const publicUser = u => ({ id: u.id, email: u.email, role: u.role });
 
 const SALT_ROUNDS = 12;
 
 // ── POST /api/v1/auth/login ──────────────────────────────────────────────────
-router.post('/login', asyncHandler(async (req, res) => {
+router.post('/login', loginPerIp, loginPerAccount, asyncHandler(async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
     return res.status(400).json({ error: 'email and password are required' });
@@ -37,18 +57,15 @@ router.post('/login', asyncHandler(async (req, res) => {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
-  const token = signToken(user);
-  res.json({
-    token,
-    user: { id: user.id, email: user.email, role: user.role },
-  });
+  await issueRefreshToken(db, req, res, user.id);
+  res.json({ token: signToken(user), user: publicUser(user) });
 }));
 
 // ── POST /api/v1/auth/signup ─────────────────────────────────────────────────
 // Public self-registration. Anyone can create an account, but it is ALWAYS a
 // read-only user — the requested role is ignored. To gain more privileges a
 // read-only user must request the contributor role and have an admin approve it.
-router.post('/signup', asyncHandler(async (req, res) => {
+router.post('/signup', signupPerIp, asyncHandler(async (req, res) => {
   const { email, password } = req.body;
 
   if (!email || !password) {
@@ -77,11 +94,32 @@ router.post('/signup', asyncHandler(async (req, res) => {
     action: 'user.signed_up', targetType: 'user', targetId: user.email, detail: { role: 'readonly' },
   });
 
-  const token = signToken(user);
-  res.status(201).json({
-    token,
-    user: { id: user.id, email: user.email, role: user.role },
-  });
+  await issueRefreshToken(db, req, res, user.id);
+  res.status(201).json({ token: signToken(user), user: publicUser(user) });
+}));
+
+// ── POST /api/v1/auth/refresh ────────────────────────────────────────────────
+// Called by the client on page load and whenever the access token expires.
+// Reads the role from the database every time, so role changes and
+// deactivations take effect within one access-token lifetime.
+router.post('/refresh', refreshPerIp, asyncHandler(async (req, res) => {
+  const db     = getPool('admin');
+  const userId = await rotateRefreshToken(db, req, res);
+  if (!userId) return res.status(401).json({ error: 'Session expired' });
+
+  const user = await db('users').select('id', 'email', 'role', 'is_active').where('id', userId).first();
+  if (!user || !user.is_active) {
+    await revokeRefreshToken(db, req, res);
+    return res.status(401).json({ error: 'Account is inactive' });
+  }
+
+  res.json({ token: signToken(user), user: publicUser(user) });
+}));
+
+// ── POST /api/v1/auth/logout ─────────────────────────────────────────────────
+router.post('/logout', asyncHandler(async (req, res) => {
+  await revokeRefreshToken(getPool('admin'), req, res);
+  res.status(204).end();
 }));
 
 // ── POST /api/v1/auth/register ───────────────────────────────────────────────

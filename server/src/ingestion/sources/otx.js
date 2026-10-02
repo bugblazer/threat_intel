@@ -20,6 +20,7 @@
  *   - Access Control: contributor pool writes; readonly pool never used here
  */
 
+const { normalizeIocType } = require('../../lib/indicators');
 const { fetchWithRetry } = require('../utils/fetchWithRetry');
 const { batchUpsert }    = require('../utils/upsert');
 const { makeLogger }     = require('../utils/logger');
@@ -28,18 +29,12 @@ const OTX_BASE    = 'https://otx.alienvault.com/api/v1';
 const MAX_PAGES   = 10;   // cap at 10 pages (100 pulses) per run
 const PAGE_SIZE   = 10;
 
-// IOC type mapping: OTX → our internal vocabulary
-const TYPE_MAP = {
-  'IPv4':        'ip',
-  'IPv6':        'ip',
-  'domain':      'domain',
-  'hostname':    'domain',
-  'URL':         'url',
-  'URI':         'url',
-  'FileHash-MD5':    'md5',
-  'FileHash-SHA1':   'sha1',
-  'FileHash-SHA256': 'sha256',
-};
+// OTX indicator types we import. Everything else (CVE, email, YARA, ...) is skipped.
+// The canonical names come from the shared normalizer in lib/indicators.js.
+const IMPORTED_TYPES = new Set([
+  'IPv4', 'IPv6', 'domain', 'hostname', 'URL', 'URI',
+  'FileHash-MD5', 'FileHash-SHA1', 'FileHash-SHA256',
+]);
 
 /**
  * Build headers with optional API key.
@@ -78,8 +73,8 @@ async function fetchPulsePage(page, modifiedSince) {
  * Parse a single OTX indicator into an `iocs` row.
  */
 function parseIndicator(indicator, pulse) {
-  const type = TYPE_MAP[indicator.type];
-  if (!type) return null; // skip CVE, email, YARA etc.
+  if (!IMPORTED_TYPES.has(indicator.type)) return null; // skip CVE, email, YARA etc.
+  const type = normalizeIocType(indicator.type);
 
   const now = new Date();
   return {

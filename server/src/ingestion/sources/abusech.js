@@ -21,6 +21,7 @@
  *   - Indexing: type, source_feed, last_seen, malware_family, value trigram
  */
 
+const { normalizeIocType } = require('../../lib/indicators');
 const { fetchWithRetry } = require('../utils/fetchWithRetry');
 const { batchUpsert }    = require('../utils/upsert');
 const { makeLogger }     = require('../utils/logger');
@@ -139,15 +140,8 @@ async function fetchThreatFox(daysBack = 1) {
 function parseThreatFox(ioc) {
   const now = new Date();
 
-  // Normalise IOC type to our internal vocabulary
-  const typeMap = {
-    'ip:port': 'ip',
-    'domain':  'domain',
-    'url':     'url',
-    'md5_hash':    'md5',
-    'sha256_hash': 'sha256',
-  };
-  const type = typeMap[ioc.ioc_type] ?? ioc.ioc_type ?? 'unknown';
+  // Normalise IOC type to the shared vocabulary (sha1_hash -> sha1, ip:port -> ip, ...)
+  const type = normalizeIocType(ioc.ioc_type);
 
   // Strip port from IP:port values so we store the raw IP
   let value = ioc.ioc;

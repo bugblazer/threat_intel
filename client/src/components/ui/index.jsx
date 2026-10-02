@@ -1,9 +1,26 @@
 // components/ui/index.jsx — Reusable UI primitives
 
 export function SeverityBadge({ severity }) {
-  if (!severity) return null;
+  // No severity = NVD hasn't analysed the CVE yet. Say so instead of showing nothing.
+  if (!severity) {
+    return <span className="badge badge-pending" title="NVD hasn't scored this CVE yet">Awaiting analysis</span>;
+  }
   const s = severity.toLowerCase();
   return <span className={`badge badge-${s}`}>{severity}</span>;
+}
+
+// CISA Known Exploited Vulnerabilities: confirmed exploitation in the wild.
+export function KevBadge({ addedAt, ransomware }) {
+  if (!addedAt) return null;
+  const added = new Date(addedAt).toLocaleDateString();
+  return (
+    <span
+      className="badge badge-kev"
+      title={`In CISA's Known Exploited Vulnerabilities catalog since ${added}${ransomware ? ' · used in ransomware campaigns' : ''}`}
+    >
+      {ransomware ? 'KEV · ransomware' : 'KEV'}
+    </span>
+  );
 }
 
 export function TypeBadge({ type }) {

@@ -84,8 +84,14 @@ export default function DashboardPage() {
         <KpiCard
           label="Total CVEs"
           value={kpis.totalCves}
-          sub="All ingested vulnerabilities"
+          sub={kpis.unscoredCves ? `${kpis.unscoredCves.toLocaleString()} awaiting NVD analysis` : 'All ingested vulnerabilities'}
           accent="var(--cyan)"
+        />
+        <KpiCard
+          label="Known Exploited"
+          value={kpis.kevCves}
+          sub={`CISA KEV · ${kpis.kevRansomware ?? 0} ransomware · ${kpis.kevLast30 ?? 0} added in 30 days`}
+          accent="var(--critical)"
         />
         <KpiCard
           label="Critical CVEs"

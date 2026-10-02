@@ -33,12 +33,13 @@ router.get('/summary', asyncHandler(async (req, res) => {
     recentCves,
     recentIocs,
     topTechniques,
+    kevStats,
   ] = await Promise.all([
-    // CVE counts by severity
+    // CVE counts by severity. NULL severity = awaiting NVD analysis; it used to be
+    // filtered out here, so the "Total CVEs" KPI silently undercounted.
     db('cves')
       .select('severity')
       .count('id as count')
-      .whereNotNull('severity')
       .groupBy('severity')
       .orderBy('count', 'desc'),
 
@@ -65,8 +66,8 @@ router.get('/summary', asyncHandler(async (req, res) => {
 
     // 5 most recently published CVEs
     db('cves')
-      .select('cve_id', 'description', 'cvss_score', 'severity', 'published_at')
-      .orderBy('published_at', 'desc')
+      .select('cve_id', 'description', 'cvss_score', 'severity', 'published_at', 'kev_added_at')
+      .orderByRaw('published_at DESC NULLS LAST')
       .limit(5),
 
     // 10 most recent IOCs
@@ -79,12 +80,23 @@ router.get('/summary', asyncHandler(async (req, res) => {
       .select('technique_id', 'name', 'tactic', 'total_frequency', 'ioc_count', 'cve_count')
       .orderBy('total_frequency', 'desc')
       .limit(10),
+
+    // CISA Known Exploited Vulnerabilities in the database
+    db('cves')
+      .whereNotNull('kev_added_at')
+      .select(
+        db.raw('COUNT(*)::int AS total'),
+        db.raw('COUNT(*) FILTER (WHERE kev_ransomware)::int AS ransomware'),
+        db.raw("COUNT(*) FILTER (WHERE kev_added_at >= CURRENT_DATE - INTERVAL '30 days')::int AS last30"),
+      )
+      .first(),
   ]);
 
   // Compute top-level KPI numbers
   const totalCves = cveStats.reduce((sum, r) => sum + Number(r.count), 0);
   const totalIocs = iocStats.reduce((sum, r) => sum + Number(r.count), 0);
   const criticalCves = cveStats.find(r => r.severity === 'CRITICAL')?.count ?? 0;
+  const unscoredCves = Number(cveStats.find(r => r.severity == null)?.count ?? 0);
 
   // Detection coverage breakdown
   const cov = Object.fromEntries((coverageStats ?? []).map(r => [r.detection_status, Number(r.count)]));
@@ -103,6 +115,10 @@ router.get('/summary', asyncHandler(async (req, res) => {
       totalIocs,
       totalTechniques,
       criticalCves:     Number(criticalCves),
+      unscoredCves,
+      kevCves:          kevStats?.total ?? 0,
+      kevRansomware:    kevStats?.ransomware ?? 0,
+      kevLast30:        kevStats?.last30 ?? 0,
       coveragePct,
       detectedTechniques,
       partialTechniques,

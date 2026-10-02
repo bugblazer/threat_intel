@@ -29,6 +29,11 @@ const requestRoutes      = require('./routes/requests.routes');
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
+// The API sits behind a local reverse proxy (Cloudflare Tunnel / Vite in dev).
+// Trusting loopback makes req.ip the real client IP (for rate limiting) and
+// req.secure reflect HTTPS (for the Secure flag on the refresh cookie).
+app.set('trust proxy', 'loopback');
+
 app.use(cors({
   origin: process.env.CLIENT_URL || 'http://localhost:5173',
   credentials: true,
@@ -72,14 +77,18 @@ app.use((_req, res) => res.status(404).json({ error: 'Route not found' }));
 app.use(errorHandler);
 
 // ── Start ─────────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`[${new Date().toISOString()}] API server running on http://localhost:${PORT}`);
-  console.log(`[${new Date().toISOString()}] Environment: ${process.env.NODE_ENV || 'development'}`);
+// Only listen when run directly (node src/index.js / nodemon); tests import the
+// app and start it on a random port themselves.
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`[${new Date().toISOString()}] API server running on http://localhost:${PORT}`);
+    console.log(`[${new Date().toISOString()}] Environment: ${process.env.NODE_ENV || 'development'}`);
 
-  // Start ingestion cron (only in non-test environments)
-  if (process.env.NODE_ENV !== 'test') {
-    startScheduler();
-  }
-});
+    // Start ingestion cron (only in non-test environments)
+    if (process.env.NODE_ENV !== 'test') {
+      startScheduler();
+    }
+  });
+}
 
 module.exports = app; // for testing

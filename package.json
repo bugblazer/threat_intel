@@ -13,6 +13,7 @@
     "migrate": "npm run migrate --workspace=server",
     "migrate:rollback": "npm run migrate:rollback --workspace=server",
     "seed": "npm run seed --workspace=server",
-    "ingest": "npm run ingest --workspace=server"
+    "ingest": "npm run ingest --workspace=server",
+    "test": "npm test --workspace=server"
   }
 }

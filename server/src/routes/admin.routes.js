@@ -7,7 +7,7 @@
  * PATCH /users/:id     — update role or active status
  * DELETE /users/:id    — deactivate a user
  * POST /ingest         — trigger a manual ingestion run
- * GET  /ingest/status  — last ingestion run results (in-memory)
+ * GET  /ingest/status  — current run and recent history (ingestion_runs table)
  *
  * DB Concepts demonstrated:
  *   Access Control — requireRole('admin') + RLS on users table
@@ -27,9 +27,8 @@ router.use(requireAuth);
 const adminOnly       = requireRole('admin');
 const canRunIngestion = requireRole('contributor', 'admin');
 
-// In-memory store for last ingestion result (simple — no Redis needed for a course project)
-let lastIngestionResult = null;
-let ingestionRunning    = false;
+const { runIngestion, getIngestionStatus, IngestionBusyError } = require('../ingestion/index');
+const { revokeAllForUser } = require('../lib/refreshTokens');
 
 // ── GET /api/v1/admin/users ───────────────────────────────────────────────────
 router.get('/users', adminOnly, asyncHandler(async (req, res) => {
@@ -83,6 +82,8 @@ router.patch('/users/:id', adminOnly, asyncHandler(async (req, res) => {
     });
   }
   if (updates.is_active !== undefined && updates.is_active !== before.is_active) {
+    // A deactivated user's open sessions end at their next refresh (max 15 minutes).
+    if (!updates.is_active) await revokeAllForUser(db, updated.id);
     await logAudit(db, req, {
       action: updates.is_active ? 'user.activated' : 'user.deactivated',
       targetType: 'user', targetId: updated.email, detail: {},
@@ -110,6 +111,7 @@ router.delete('/users/:id', adminOnly, asyncHandler(async (req, res) => {
     .returning(['id', 'email', 'is_active']);
 
   if (!updated) return res.status(404).json({ error: 'User not found' });
+  await revokeAllForUser(db, updated.id);
 
   await logAudit(db, req, {
     action: 'user.deactivated', targetType: 'user', targetId: updated.email, detail: {},
@@ -186,44 +188,51 @@ router.patch('/role-requests/:id', adminOnly, asyncHandler(async (req, res) => {
 // ── POST /api/v1/admin/ingest ─────────────────────────────────────────────────
 // Trigger a manual ingestion run (runs in background, returns immediately)
 router.post('/ingest', canRunIngestion, asyncHandler(async (req, res) => {
-  if (ingestionRunning) {
-    return res.status(409).json({ error: 'Ingestion already running' });
+  const { source, full_sync } = req.body;
+  const SOURCES = ['mitre', 'nvd', 'kev', 'abusech', 'otx'];
+  if (source !== undefined && !SOURCES.includes(source)) {
+    return res.status(400).json({ error: `Unknown source. Use one of: ${SOURCES.join(', ')}` });
   }
 
-  const { source, full_sync } = req.body;
-
-  // Fire and forget — don't await (ingestion can take minutes)
-  ingestionRunning = true;
-  const { runIngestion } = require('../ingestion/index');
-  runIngestion({ source, fullSync: full_sync === true })
-    .then(result => {
-      lastIngestionResult = { ...result, completedAt: new Date(), triggeredBy: req.user.email };
-      ingestionRunning = false;
-    })
-    .catch(err => {
-      lastIngestionResult = { error: err.message, completedAt: new Date() };
-      ingestionRunning = false;
+  // Start in the background (ingestion can take minutes), but wait until the run
+  // is recorded so a concurrent run is rejected with 409 instead of failing later.
+  let runId;
+  try {
+    runId = await new Promise((resolve, reject) => {
+      runIngestion({
+        source,
+        fullSync:    full_sync === true,
+        trigger:     'manual',
+        triggeredBy: req.user.email,
+        onStart:     resolve,
+      }).catch((err) => {
+        reject(err); // no-op once the run has started; the run row records the failure
+        if (!(err instanceof IngestionBusyError)) console.error('[INGEST] Manual run failed:', err.message);
+      });
     });
+  } catch (err) {
+    if (err instanceof IngestionBusyError) return res.status(409).json({ error: err.message });
+    throw err;
+  }
 
   await logAudit(getPool('admin'), req, {
     action: 'ingestion.triggered', targetType: 'ingestion', targetId: source ?? 'all',
-    detail: { source: source ?? 'all', full_sync: full_sync === true },
+    detail: { source: source ?? 'all', full_sync: full_sync === true, run_id: runId },
   });
 
   res.status(202).json({
     message: 'Ingestion started',
+    runId,
     source:  source ?? 'all',
     poll:    '/api/v1/admin/ingest/status',
   });
 }));
 
 // ── GET /api/v1/admin/ingest/status ──────────────────────────────────────────
-router.get('/ingest/status', canRunIngestion, (req, res) => {
-  res.json({
-    running: ingestionRunning,
-    last:    lastIngestionResult,
-  });
-});
+// Stored in ingestion_runs, so it survives restarts and includes scheduled runs.
+router.get('/ingest/status', canRunIngestion, asyncHandler(async (req, res) => {
+  res.json(await getIngestionStatus());
+}));
 
 // ── GET /api/v1/admin/audit-log ──────────────────────────────────────────────
 // Recent privileged actions, most recent first.

@@ -1,5 +1,7 @@
 # ThreatIntel Platform
 
+**Live:** https://threatintel.bugblazer.dev (free, read-only accounts) · Built by [bugblazer](https://bugblazer.dev)
+
 **A self-hosted threat-intelligence database that aggregates public feeds, links
 vulnerabilities to attacker behaviour, and adds a detection-coverage layer — so a team
 sees not just *what* threats exist, but *whether they could detect them*.**
@@ -14,10 +16,10 @@ vulnerabilities), **Abuse.ch** (IOCs), and **AlienVault OTX** (threat actors).
 
 ## Why it exists
 
-Security analysts pull from four disconnected public sources — each with its own format,
+Security analysts pull from five disconnected public sources — each with its own format,
 cadence, and vocabulary. Correlating a vulnerability to the technique that exploits it, or
 an indicator to the actor behind it, means manually cross-referencing multiple platforms.
-This platform pulls all four into **one queryable PostgreSQL database**, correlates them,
+This platform pulls all five into **one queryable PostgreSQL database**, correlates them,
 and layers on operational context (what the team can detect) that raw feeds don't provide.
 
 The correlation is the heart of the system: which **flaw (CVE)** is opened by which

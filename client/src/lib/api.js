@@ -1,25 +1,50 @@
-// lib/api.js — Thin API client + AuthContext
+// lib/api.js — Thin API client
+//
+// Sessions: the access token is a 15-minute JWT kept ONLY in memory (never in
+// localStorage, where any injected script could read it). The long-lived session
+// is an httpOnly refresh cookie the browser sends to /api/v1/auth only. When a
+// request gets 401, we refresh once and retry; if that fails, back to /login.
 
-// ── API client ────────────────────────────────────────────────────────────────
 const BASE = '/api/v1';
 
-function getToken() {
-  return localStorage.getItem('token');
+let accessToken = null;
+export const setAccessToken = (token) => { accessToken = token ?? null; };
+
+// Clear the token older versions of the app stored in localStorage.
+try { localStorage.removeItem('token'); } catch { /* storage unavailable */ }
+
+// Concurrent 401s share one refresh call instead of each rotating the cookie
+// (a second rotation with the same cookie would look like token theft).
+let refreshing = null;
+export function refreshSession() {
+  refreshing ??= fetch(`${BASE}/auth/refresh`, { method: 'POST', credentials: 'same-origin' })
+    .then(async (res) => {
+      if (!res.ok) { setAccessToken(null); return null; }
+      const data = await res.json();
+      setAccessToken(data.token);
+      return data;
+    })
+    .catch(() => null)
+    .finally(() => { refreshing = null; });
+  return refreshing;
 }
 
-async function request(path, options = {}) {
-  const token = getToken();
+async function request(path, options = {}, retried = false) {
   const res = await fetch(`${BASE}${path}`, {
     ...options,
+    credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
       ...options.headers,
     },
   });
 
-  if (res.status === 401) {
-    localStorage.removeItem('token');
+  // Expired access token: refresh once and retry. Auth endpoints answer 401 for
+  // bad credentials, so they're returned as errors instead.
+  if (res.status === 401 && !path.startsWith('/auth/')) {
+    if (!retried && await refreshSession()) return request(path, options, true);
+    setAccessToken(null);
     window.location.href = '/login';
     return;
   }
@@ -36,6 +61,7 @@ export const api = {
   register: (body)  => request('/auth/register', { method: 'POST', body: JSON.stringify(body) }),
   signup:   (body)  => request('/auth/signup',   { method: 'POST', body: JSON.stringify(body) }),
   me:       ()      => request('/auth/me'),
+  logout:   ()      => request('/auth/logout', { method: 'POST' }),
 
   // Dashboard
   dashboard: () => request('/dashboard/summary'),

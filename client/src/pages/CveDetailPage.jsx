@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ExternalLink } from 'lucide-react';
 import { api } from '../lib/api.js';
-import { SeverityBadge, CvssScore, MonoId, LoadingState } from '../components/ui/index.jsx';
+import { SeverityBadge, KevBadge, CvssScore, MonoId, LoadingState } from '../components/ui/index.jsx';
 
 export default function CveDetailPage() {
   const { cveId }  = useParams();
@@ -41,6 +41,7 @@ export default function CveDetailPage() {
           <div className="page-title mono" style={{ color: 'var(--cyan)', fontSize: 22 }}>{cve.cve_id}</div>
           <SeverityBadge severity={cve.severity} />
           <CvssScore score={cve.cvss_score} />
+          <KevBadge addedAt={cve.kev_added_at} ransomware={cve.kev_ransomware} />
         </div>
         {cve.cwe_id && (
           <div className="page-sub" style={{ marginTop: 6 }}>
@@ -53,6 +54,19 @@ export default function CveDetailPage() {
           </div>
         )}
       </div>
+
+      {/* Known exploitation (CISA KEV) */}
+      {cve.kev_added_at && (
+        <div className="card mb-4" style={{ borderColor: 'var(--critical)', background: 'var(--critical-dim)' }}>
+          <div className="section-title" style={{ marginBottom: 8, color: 'var(--critical)' }}>Exploited in the wild</div>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+            CISA added this CVE to its Known Exploited Vulnerabilities catalog on{' '}
+            <strong>{new Date(cve.kev_added_at).toLocaleDateString()}</strong>
+            {cve.kev_due_date && <> and set a remediation deadline of <strong>{new Date(cve.kev_due_date).toLocaleDateString()}</strong> for US federal agencies</>}.
+            {cve.kev_ransomware && <> It is known to be used in <strong>ransomware campaigns</strong>.</>}
+          </p>
+        </div>
+      )}
 
       {/* Description */}
       <div className="card mb-4">

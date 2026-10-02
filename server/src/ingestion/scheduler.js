@@ -13,20 +13,26 @@
  */
 
 const cron            = require('node-cron');
-const { runIngestion} = require('./index');
+const { runIngestion, markInterruptedRuns, IngestionBusyError } = require('./index');
 const { makeLogger }  = require('./utils/logger');
 
 const log = makeLogger('SCHEDULER');
 
 function startScheduler() {
+  // A run left as 'running' was cut off when the API last stopped; free the lock.
+  markInterruptedRuns()
+    .then(n => n && log.warn(`Marked ${n} unfinished ingestion run(s) as interrupted`))
+    .catch(err => log.error('Could not check for interrupted runs:', err.message));
+
   // ── Incremental sync — every 6 hours ────────────────────────────────────
   const incrementalCron = process.env.INGEST_CRON || '0 */6 * * *';
 
   cron.schedule(incrementalCron, async () => {
     log.info(`Cron triggered (${incrementalCron}) — running incremental ingestion`);
     try {
-      await runIngestion({ fullSync: false });
+      await runIngestion({ fullSync: false, trigger: 'schedule' });
     } catch (err) {
+      if (err instanceof IngestionBusyError) return log.warn('Skipped: another ingestion run is still going');
       log.error('Scheduled ingestion failed:', err.message);
     }
   });
@@ -35,8 +41,9 @@ function startScheduler() {
   cron.schedule('0 0 * * 0', async () => {
     log.info('Weekly MITRE re-sync triggered');
     try {
-      await runIngestion({ source: 'mitre' });
+      await runIngestion({ source: 'mitre', trigger: 'schedule' });
     } catch (err) {
+      if (err instanceof IngestionBusyError) return log.warn('Skipped MITRE re-sync: another run is still going');
       log.error('MITRE weekly re-sync failed:', err.message);
     }
   });

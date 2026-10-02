@@ -15,6 +15,7 @@
 const router          = require('express').Router();
 const { getPool }     = require('../db/db');
 const { requireAuth } = require('../middleware/auth');
+const { refang } = require('../lib/indicators');
 const { asyncHandler, paginate } = require('../middleware/common');
 
 router.use(requireAuth);
@@ -112,14 +113,6 @@ router.get('/stats', asyncHandler(async (req, res) => {
 // Bulk lookup: paste many indicators at once (from an alert, email, etc.) and
 // get back which ones are known. Handles "defanged" indicators automatically
 // (e.g. 1[.]2[.]3[.]4, hxxp://evil, evil(dot)com).
-function refang(raw) {
-  return String(raw)
-    .trim()
-    .replace(/\[\.\]|\(\.\)|\{\.\}|\(dot\)|\[dot\]/gi, '.')
-    .replace(/\[@\]|\(at\)|\[at\]/gi, '@')
-    .replace(/^h(?:xx|XX)?p(s?):\/\//i, 'http$1://')
-    .replace(/^(\s*)/, '');
-}
 
 router.post('/lookup', asyncHandler(async (req, res) => {
   const db = getPool(req.user.role);

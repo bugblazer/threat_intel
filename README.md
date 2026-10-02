@@ -4,9 +4,9 @@
 vulnerabilities to attacker behaviour, and adds a detection-coverage layer — so a team
 sees not just *what* threats exist, but *whether they could detect them*.**
 
-Built on **React · Node.js / Express · PostgreSQL**, pulling from four public sources:
-**MITRE ATT&CK** (techniques), **NVD / NIST** (CVEs), **Abuse.ch** (IOCs), and
-**AlienVault OTX** (threat actors).
+Built on **React · Node.js / Express · PostgreSQL**, pulling from five public sources:
+**MITRE ATT&CK** (techniques), **NVD / NIST** (CVEs), **CISA KEV** (known exploited
+vulnerabilities), **Abuse.ch** (IOCs), and **AlienVault OTX** (threat actors).
 
 ![Intelligence Overview dashboard](docs/screenshots/dashboard-overview.png)
 
@@ -47,6 +47,12 @@ Severity / score / CWE filters, PostgreSQL full-text search, per-CVE threat sign
 (linked techniques, linked IOCs, and a red **"blind"** badge when a CVE maps to a
 technique with no detection coverage), and a coverage-weighted "threat-informed" sort.
 
+- **Known exploited (CISA KEV):** CVEs in CISA's Known Exploited Vulnerabilities catalog get
+  a KEV badge (and "ransomware" when CISA reports ransomware use), a filter, a callout with
+  the date added and remediation deadline, and a heavy boost in the threat-informed sort.
+- **Awaiting analysis:** CVEs NVD hasn't scored yet are labelled as such, can be filtered,
+  are counted on the dashboard, and sort after scored CVEs instead of before them.
+
 ![CVE Explorer](docs/screenshots/cve-explorer.png)
 
 ### ATT&CK Matrix — frequency + detection coverage
@@ -83,7 +89,14 @@ Adversary profiles with their mapped ATT&CK techniques, aliases, motive, and cou
 ### Access control (database-enforced)
 Three roles — **read-only** (view), **contributor** (write data + run ingestion), and
 **admin** (manage users) — enforced by distinct PostgreSQL roles, `GRANT`/`REVOKE`, and
-row-level security, not just application code. JWT auth with bcrypt-hashed passwords.
+row-level security, not just application code. Passwords are hashed with bcrypt.
+
+- **Sessions:** a 15-minute JWT kept in memory by the client, plus a refresh token in an
+  `httpOnly`, `SameSite=Strict` cookie scoped to `/api/v1/auth`. Refresh tokens rotate on
+  every use and only their SHA-256 hash is stored; replaying an already-rotated token
+  revokes that whole session. Sessions last at most 30 days, and deactivating a user ends
+  their sessions.
+- **Rate limiting:** sign-in is limited per IP and per account, sign-up per IP.
 
 - **Public sign-up** creates a read-only account.
 - **Contributor requests** — a read-only user requests an upgrade; an admin approves or
@@ -99,8 +112,12 @@ detection-coverage edits (with before → after).
 ![Activity log](docs/screenshots/activity-log.png)
 
 ### Ingestion
-Scheduled (cron) and on-demand manual runs across all four feeds, with a post-ingestion
-**linker** that correlates CVEs and IOCs to ATT&CK techniques.
+Scheduled (cron) and on-demand manual runs across all five feeds, with a post-ingestion
+**linker** that correlates CVEs and IOCs to ATT&CK techniques. Every run (scheduled, manual
+or CLI) is recorded in `ingestion_runs` with per-source results and errors, so the history
+survives restarts. A partial unique index allows only one run at a time, and a run cut off
+by a restart is marked `interrupted`. IOC types from all feeds are normalised to one
+vocabulary (e.g. ThreatFox `sha1_hash` and OTX `FileHash-SHA1` are both `sha1`).
 
 ![Ingestion](docs/screenshots/ingestion.png)
 
@@ -123,6 +140,7 @@ Scheduled (cron) and on-demand manual runs across all four feeds, with a post-in
 | NVD CVE Feed (NIST) | CVEs with CVSS scores and affected products | None (public API) |
 | Abuse.ch | Malware hashes, C2 URLs, botnet IOCs | None (public feeds) |
 | AlienVault OTX | Community threat pulses with ATT&CK mappings | API key (free) |
+| CISA KEV | CVEs confirmed exploited in the wild, ransomware use, remediation dates | None (public JSON) |
 
 ---
 
@@ -203,6 +221,10 @@ npm run migrate:rollback  # roll back last batch
 | 009 | `detection_attribution` | Who/when set each technique's coverage |
 | 010 | `audit_log` | Audit trail of privileged actions |
 | 011 | `contributor_view_grants` | Grant contributors SELECT on the views |
+| 012 | `normalize_ioc_types` | Data fix: one IOC type vocabulary across feeds |
+| 013 | `cve_kev` | CISA KEV columns on `cves` + partial index |
+| 014 | `ingestion_runs` | Run history; partial unique index = one run at a time |
+| 015 | `refresh_tokens` | Hashed, rotating refresh tokens grouped into session families |
 
 ---
 
@@ -255,6 +277,18 @@ threat-intel/
   <img src="docs/screenshots/signup.png" width="49%" alt="Sign up" />
 </p>
 
-Login exchanges email + password for a JWT that carries the user's role; the API then
-attaches the matching PostgreSQL connection pool, so the database itself enforces
-permissions on every request.
+Login exchanges email + password for a short-lived JWT that carries the user's role, plus
+a rotating refresh cookie. The API attaches the PostgreSQL connection pool matching the
+role, so the database itself enforces permissions on every request.
+
+## Tests
+
+```bash
+npm test
+```
+
+Runs with Node's built-in test runner (no extra dependencies): the CVE-to-technique
+linker, IOC type normalisation and refanging, NVD/KEV parsing and the rate limiter, plus
+database-backed tests for the full auth flow (sign-up cookie, rotation, reuse detection,
+logout, rate limiting) and the one-run-at-a-time ingestion lock. The database tests use the
+`.env` database, clean up after themselves, and skip if Postgres isn't reachable.

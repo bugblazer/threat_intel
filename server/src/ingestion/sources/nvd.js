@@ -128,13 +128,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
  * Fetch one page from the NVD API.
  * @param {URLSearchParams} params
  */
-async function fetchPage(params) {
+async function fetchPage(params, { extraQuery = '' } = {}) {
   const headers = {};
   if (process.env.NVD_API_KEY) {
     headers['apiKey'] = process.env.NVD_API_KEY;
   }
-  const url = `${NVD_BASE}?${params.toString()}`;
-  const res  = await fetchWithRetry(url, { timeoutMs: 60_000, retries: 3 });
+  // extraQuery carries value-less flags such as `hasKev`, which URLSearchParams can't express.
+  const url = `${NVD_BASE}?${params.toString()}${extraQuery}`;
+  // BUG FIX: the headers object was built but never passed, so the API key was
+  // never sent and every sync ran at the keyless rate.
+  const res  = await fetchWithRetry(url, { headers, timeoutMs: 60_000, retries: 3 });
   return res.json();
 }
 
@@ -188,4 +191,4 @@ async function ingestNvd(db, { fullSync = false, hoursBack = 8 } = {}) {
   return { count };
 }
 
-module.exports = { ingestNvd };
+module.exports = { ingestNvd, parseCve, fetchPage };

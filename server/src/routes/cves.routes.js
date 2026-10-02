@@ -1,7 +1,7 @@
 /**
  * cves.routes.js — /api/v1/cves
  *
- * GET  /             — paginated list with filters (severity, score range, date)
+ * GET  /             — paginated list with filters (severity incl. UNSCORED, score, date, KEV)
  * GET  /search       — full-text search using tsvector (DB Concept: Full-Text Search)
  * GET  /high-severity — read from high_severity_cves view (DB Concept: Views)
  * GET  /:cveId       — single CVE detail with linked techniques
@@ -28,7 +28,7 @@ router.get('/', asyncHandler(async (req, res) => {
   const { limit, offset } = req.pagination;
 
   const {
-    severity,          // CRITICAL|HIGH|MEDIUM|LOW
+    severity,          // CRITICAL|HIGH|MEDIUM|LOW, or UNSCORED (awaiting NVD analysis)
     min_score,         // e.g. 7.0
     max_score,         // e.g. 10.0
     cwe_id,
@@ -36,6 +36,7 @@ router.get('/', asyncHandler(async (req, res) => {
     published_before,
     sort,              // 'severity' (default) | 'threat' | 'recent'
     threat_only,       // 'true' — only CVEs linked to a technique or IOC
+    kev,               // 'true' — only CVEs in CISA's Known Exploited Vulnerabilities catalog
   } = req.query;
 
   // "Threat signal" sub-selects: how many ATT&CK techniques this CVE maps to,
@@ -48,13 +49,20 @@ router.get('/', asyncHandler(async (req, res) => {
   const BLIND_EXPR = `(SELECT COUNT(*) FROM cve_technique_map ctm
                          JOIN techniques t2 ON t2.id = ctm.technique_id
                         WHERE ctm.cve_id = c.id AND t2.detection_status = 'none')`;
-  // Priority = technique links + IOC links + a double weighting for blind techniques.
-  const PRIORITY_EXPR = `(${TECH_EXPR} + ${IOC_EXPR} + 2 * ${BLIND_EXPR})`;
+  // A CVE in CISA's KEV catalog is confirmed exploited in the wild, a much
+  // stronger signal than a keyword link, so it outweighs several of those.
+  const KEV_EXPR = '(CASE WHEN c.kev_added_at IS NOT NULL THEN 1 ELSE 0 END)';
+  // Priority = technique links + IOC links + double weight for blind techniques
+  //            + a large boost for known exploitation.
+  const PRIORITY_EXPR = `(${TECH_EXPR} + ${IOC_EXPR} + 2 * ${BLIND_EXPR} + 5 * ${KEV_EXPR})`;
 
   let query = db('cves as c');
 
   // Apply filters — each uses a dedicated index (migration 004)
-  if (severity)         query = query.where('c.severity', severity.toUpperCase());
+  // New CVEs often arrive before NVD has scored them; they have no severity yet.
+  if (severity?.toUpperCase() === 'UNSCORED') query = query.whereNull('c.severity');
+  else if (severity)    query = query.where('c.severity', severity.toUpperCase());
+  if (kev === 'true')   query = query.whereNotNull('c.kev_added_at');
   if (min_score)        query = query.where('c.cvss_score', '>=', parseFloat(min_score));
   if (max_score)        query = query.where('c.cvss_score', '<=', parseFloat(max_score));
   if (cwe_id)           query = query.where('c.cwe_id', cwe_id);
@@ -85,6 +93,9 @@ router.get('/', asyncHandler(async (req, res) => {
     'c.cwe_id',
     'c.published_at',
     'c.affected_products',
+    'c.kev_added_at',
+    'c.kev_due_date',
+    'c.kev_ransomware',
     db.raw(`${TECH_EXPR}::int  AS technique_count`),
     db.raw(`${IOC_EXPR}::int   AS ioc_count`),
     db.raw(`${BLIND_EXPR}::int AS blind_technique_count`),
@@ -96,11 +107,13 @@ router.get('/', asyncHandler(async (req, res) => {
     // Coverage-aware: CVEs touching techniques you can't detect float to the top.
     rowsQuery = rowsQuery
       .orderByRaw(`${PRIORITY_EXPR} DESC`)
-      .orderBy('c.cvss_score', 'desc');
+      .orderByRaw('c.cvss_score DESC NULLS LAST');
   } else if (sort === 'recent') {
-    rowsQuery = rowsQuery.orderBy('c.published_at', 'desc');
+    rowsQuery = rowsQuery.orderByRaw('c.published_at DESC NULLS LAST');
   } else {
-    rowsQuery = rowsQuery.orderBy('c.cvss_score', 'desc').orderBy('c.published_at', 'desc');
+    // Postgres puts NULLs FIRST in a DESC sort, which listed every unscored CVE
+    // above the critical ones. Unscored CVEs go last; filter for them explicitly.
+    rowsQuery = rowsQuery.orderByRaw('c.cvss_score DESC NULLS LAST').orderByRaw('c.published_at DESC NULLS LAST');
   }
 
   const rows = await rowsQuery.limit(limit).offset(offset);
@@ -137,10 +150,12 @@ router.get('/search', asyncHandler(async (req, res) => {
       severity,
       cwe_id,
       published_at,
+      kev_added_at,
+      kev_ransomware,
       ts_rank(search_vector, plainto_tsquery('english', ?)) AS rank
     FROM cves
     WHERE search_vector @@ plainto_tsquery('english', ?)
-    ORDER BY rank DESC, cvss_score DESC
+    ORDER BY rank DESC, cvss_score DESC NULLS LAST
     LIMIT ? OFFSET ?
   `, [q, q, limit, offset]);
 

@@ -3,12 +3,19 @@ import { useNavigate } from 'react-router-dom';
 import { Search, Filter } from 'lucide-react';
 import { api } from '../lib/api.js';
 import {
-  SeverityBadge, CvssScore, MonoId,
+  SeverityBadge, KevBadge, CvssScore, MonoId,
   LoadingState, EmptyState, Pagination,
 } from '../components/ui/index.jsx';
 import { ShieldAlert, Crosshair, Wifi, EyeOff } from 'lucide-react';
 
-const SEVERITIES = ['', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
+const SEVERITIES = [
+  { value: '',         label: 'All severities' },
+  { value: 'CRITICAL', label: 'CRITICAL' },
+  { value: 'HIGH',     label: 'HIGH' },
+  { value: 'MEDIUM',   label: 'MEDIUM' },
+  { value: 'LOW',      label: 'LOW' },
+  { value: 'UNSCORED', label: 'Awaiting analysis' },
+];
 
 // Small inline indicator of a CVE's real-world threat context.
 // A "blind" badge flags CVEs mapped to techniques with no detection coverage.
@@ -54,6 +61,7 @@ export default function CvesPage() {
   const [minScore, setMinScore] = useState('');
   const [sort, setSort]         = useState('severity'); // 'severity' | 'threat' | 'recent'
   const [threatOnly, setThreatOnly] = useState(false);
+  const [kevOnly, setKevOnly]       = useState(false);
 
   // Debounce search input 350ms
   useEffect(() => {
@@ -70,6 +78,7 @@ export default function CvesPage() {
         ...(minScore && { min_score: minScore }),
         ...(sort && { sort }),
         ...(threatOnly && { threat_only: 'true' }),
+        ...(kevOnly && { kev: 'true' }),
       };
       const data = debouncedQ
         ? await api.cvesSearch(debouncedQ, { page, limit: 25 })
@@ -79,7 +88,7 @@ export default function CvesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, debouncedQ, severity, minScore, sort, threatOnly]);
+  }, [page, debouncedQ, severity, minScore, sort, threatOnly, kevOnly]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -105,7 +114,7 @@ export default function CvesPage() {
           value={severity}
           onChange={e => { setSeverity(e.target.value); setPage(1); }}
         >
-          {SEVERITIES.map(s => <option key={s} value={s}>{s || 'All severities'}</option>)}
+          {SEVERITIES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
         </select>
         <select
           className="filter-select"
@@ -125,7 +134,7 @@ export default function CvesPage() {
           disabled={!!debouncedQ}
         >
           <option value="severity">Sort: Severity</option>
-          <option value="threat">Sort: Threat-informed</option>
+          <option value="threat" title="Known exploitation, linked techniques and IOCs, weighted towards techniques you can't detect">Sort: Threat-informed</option>
           <option value="recent">Sort: Newest</option>
         </select>
         <label
@@ -140,6 +149,19 @@ export default function CvesPage() {
             onChange={e => { setThreatOnly(e.target.checked); setPage(1); }}
           />
           With threat intel
+        </label>
+        <label
+          className="filter-select"
+          style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: debouncedQ ? 'not-allowed' : 'pointer', opacity: debouncedQ ? 0.5 : 1 }}
+          title="Only CVEs in CISA's Known Exploited Vulnerabilities catalog"
+        >
+          <input
+            type="checkbox"
+            checked={kevOnly}
+            disabled={!!debouncedQ}
+            onChange={e => { setKevOnly(e.target.checked); setPage(1); }}
+          />
+          Known exploited
         </label>
       </div>
 
@@ -167,7 +189,12 @@ export default function CvesPage() {
                   <tr key={c.cve_id} onClick={() => navigate(`/cves/${c.cve_id}`)}>
                     <td><MonoId>{c.cve_id}</MonoId></td>
                     <td><CvssScore score={c.cvss_score} /></td>
-                    <td><SeverityBadge severity={c.severity} /></td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        <SeverityBadge severity={c.severity} />
+                        <KevBadge addedAt={c.kev_added_at} ransomware={c.kev_ransomware} />
+                      </div>
+                    </td>
                     <td><ThreatSignal techniques={c.technique_count} iocs={c.ioc_count} blind={c.blind_technique_count} /></td>
                     <td>
                       <span className="mono" style={{ fontSize: 11, color: 'var(--text-muted)' }}>

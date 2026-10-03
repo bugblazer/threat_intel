@@ -1,5 +1,7 @@
 # ThreatIntel Platform
 
+![ThreatIntel: five security feeds, one dashboard](docs/screenshots/title.png)
+
 **Live:** https://threatintel.bugblazer.dev (free, read-only accounts) · Built by [bugblazer](https://bugblazer.dev)
 
 **A self-hosted threat-intelligence database that aggregates public feeds, links
